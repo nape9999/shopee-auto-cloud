@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Shopee Auto Cloud</title>
+<style>
+:root{font-family:Inter,"Noto Sans Thai",system-ui,sans-serif;color:#eef4ff;background:#07111f}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#06101d,#0a1525 45%,#07111f);min-height:100vh}
+.wrap{max-width:760px;margin:auto;padding:18px 14px 80px}.top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+h1{font-size:23px;margin:0}.tag{font-size:12px;padding:7px 10px;border:1px solid #28405f;border-radius:999px;background:#0c1b2e}
+.card{background:#0d1a2b;border:1px solid #203650;border-radius:20px;padding:16px;margin-top:14px;box-shadow:0 8px 30px #0004}
+.row{display:flex;gap:9px;flex-wrap:wrap}.between{justify-content:space-between;align-items:center}
+button,.btn{border:0;border-radius:13px;padding:11px 14px;font-weight:700;background:#1887ff;color:white;cursor:pointer}
+button.alt{background:#172a40;color:#e8f1ff;border:1px solid #29445f}.danger{background:#5b2330}
+input,textarea{width:100%;padding:12px;border-radius:12px;border:1px solid #29415d;background:#081523;color:#fff;margin-top:7px}
+small,.muted{color:#8ca4bf}.ok{color:#66e4a4}.bad{color:#ff8f8f}.warn{color:#ffd57a}
+.job{padding:13px 0;border-top:1px solid #1d334d}.job:first-child{border-top:0}
+.name{font-weight:800;font-size:16px}.pill{font-size:11px;border-radius:999px;padding:4px 8px;background:#142a40;color:#a9c7e8}
+#browserCard{display:none}.screen{width:100%;border-radius:14px;border:1px solid #2a4867;background:#000;touch-action:none}
+.kbd{display:grid;grid-template-columns:1fr auto auto auto;gap:7px;margin-top:9px}
+.log{font-size:12px;padding:8px 0;border-top:1px solid #1c3046}.result{white-space:pre-wrap;font-size:12px;background:#07121f;border-radius:12px;padding:10px;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div><h1>Shopee Auto Cloud</h1><div class="muted">ตั้งจากมือถือ • ปิดเครื่องได้</div></div>
+    <div class="tag" id="session">กำลังตรวจ...</div>
+  </div>
+
+  <div class="card">
+    <div class="row between">
+      <div><b>1. เชื่อม Shopee Session</b><div class="muted">Login ครั้งเดียว แล้ว Session เก็บใน Cloud Volume</div></div>
+      <button onclick="openBrowser()">เปิด Login</button>
+    </div>
+  </div>
+
+  <div class="card" id="browserCard">
+    <div class="row between"><b>Remote Browser</b><button class="alt" onclick="closeBrowser()">ปิด</button></div>
+    <div class="muted" id="browserUrl" style="margin:7px 0"></div>
+    <img id="screen" class="screen" alt="remote browser">
+    <div class="kbd">
+      <input id="typeBox" placeholder="พิมพ์ข้อความ/OTP แล้วกด ส่ง">
+      <button onclick="sendType()">ส่ง</button>
+      <button class="alt" onclick="sendKey('Tab')">Tab</button>
+      <button class="alt" onclick="sendKey('Enter')">Enter</button>
+    </div>
+    <div class="muted" style="margin-top:8px">ระบบไม่บันทึกรหัสผ่าน/OTP ลงไฟล์หรือ Log แต่ข้อมูลที่พิมพ์จะผ่านเซิร์ฟเวอร์ชั่วคราวเพื่อส่งเข้าหน้า Shopee</div>
+  </div>
+
+  <div class="card">
+    <div class="row between">
+      <div><b>2. รายการ Auto</b><div class="muted">มีมือถือสีดำ + รองเท้าไซซ์ 45 พร้อมแล้ว</div></div>
+      <button class="alt" onclick="loadPresets()">โหลดค่าแนะนำ</button>
+    </div>
+    <div id="jobs"></div>
+  </div>
+
+  <div class="card">
+    <b>3. TEST ก่อนวันจริง</b>
+    <div class="muted">TEST จะไปถึง Checkout ตรวจยอดและตรวจว่ามีปุ่ม “สั่งซื้อ” แต่จะไม่กดปุ่มสุดท้าย</div>
+    <div id="testResult"></div>
+  </div>
+
+  <div class="card">
+    <div class="row between"><b>Log ล่าสุด</b><button class="alt" onclick="loadLogs()">รีเฟรช</button></div>
+    <div id="logs"></div>
+  </div>
+</div>
+
+<script>
+const qs = new URLSearchParams(location.search);
+let pin = localStorage.getItem("control_pin") || qs.get("pin") || "";
+if(qs.get("pin")) localStorage.setItem("control_pin", qs.get("pin"));
+
+async function api(url,opt={}){
+  opt.headers={...(opt.headers||{}),"content-type":"application/json"};
+  if(pin) opt.headers["x-control-pin"]=pin;
+  let r=await fetch(url,opt);
+  if(r.status===401){
+    const p=prompt("ใส่ CONTROL PIN");
+    if(p){ pin=p; localStorage.setItem("control_pin",p); return api(url,opt); }
+  }
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(data.error||r.statusText);
+  return data;
+}
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+
+async function status(){
+  try{
+    const s=await api("/api/session/status");
+    const el=document.querySelector("#session");
+    if(s.loggedIn){el.textContent="● Login พร้อม";el.className="tag ok"}
+    else if(s.captcha){el.textContent="● CAPTCHA";el.className="tag bad"}
+    else {el.textContent="● ยังไม่ Login";el.className="tag warn"}
+  }catch(e){}
+}
+async function loadPresets(){
+  await api("/api/presets",{method:"POST",body:"{}"});
+  await loadJobs();
+}
+async function loadJobs(){
+  const jobs=await api("/api/jobs");
+  const box=document.querySelector("#jobs");
+  box.innerHTML=jobs.length?"":"<div class='muted' style='margin-top:12px'>ยังไม่มีรายการ</div>";
+  for(const j of jobs){
+    const d=document.createElement("div");d.className="job";
+    d.innerHTML=`
+      <div class="row between">
+       <div><div class="name">${esc(j.name)}</div>
+       <div class="muted">${esc(j.startAt)} • ≤ ${esc(j.maxTotalThb)} บาท</div></div>
+       <span class="pill">${j.enabled?"AUTO ON":"OFF"}</span>
+      </div>
+      <div class="row" style="margin-top:9px">
+        <button onclick="testJob('${j.id}')">TEST</button>
+        <button class="alt" onclick="toggleJob('${j.id}',${!j.enabled})">${j.enabled?"ปิด Auto":"เปิด Auto"}</button>
+      </div>`;
+    box.appendChild(d);
+  }
+}
+async function toggleJob(id,enabled){
+  await api("/api/jobs/"+id,{method:"PUT",body:JSON.stringify({enabled})}); loadJobs();
+}
+async function testJob(id){
+  const out=document.querySelector("#testResult");
+  out.innerHTML="<div class='result'>กำลัง TEST... อาจใช้เวลา 10–30 วินาที</div>";
+  try{
+    const r=await api(`/api/jobs/${id}/test`,{method:"POST",body:"{}"});
+    out.innerHTML=`<div class="result">${esc(JSON.stringify(r,null,2))}</div>`+
+      (r.screenshot?`<img class="screen" src="${r.screenshot}?pin=${encodeURIComponent(pin)}&t=${Date.now()}">`:"");
+    await loadLogs();
+  }catch(e){out.innerHTML=`<div class="result bad">${esc(e.message)}</div>`}
+}
+async function loadLogs(){
+  const logs=await api("/api/logs?limit=30");
+  document.querySelector("#logs").innerHTML=logs.map(x=>`<div class="log"><b>${esc(x.kind)}</b> ${esc(x.message)}<br><span class="muted">${new Date(x.at).toLocaleString("th-TH")}</span></div>`).join("");
+}
+
+let ws=null;
+async function openBrowser(){
+  await api("/api/session/open-login",{method:"POST",body:"{}"});
+  document.querySelector("#browserCard").style.display="block";
+  const proto=location.protocol==="https:"?"wss":"ws";
+  ws=new WebSocket(`${proto}://${location.host}/ws/browser?pin=${encodeURIComponent(pin)}`);
+  ws.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.type==="frame"){
+      document.querySelector("#screen").src="data:image/jpeg;base64,"+m.data;
+      document.querySelector("#browserUrl").textContent=m.url||"";
+    }
+  };
+}
+function closeBrowser(){ if(ws)ws.close(); ws=null; document.querySelector("#browserCard").style.display="none"; status(); }
+document.querySelector("#screen").addEventListener("click",e=>{
+  if(!ws)return;
+  const r=e.currentTarget.getBoundingClientRect();
+  const x=(e.clientX-r.left)/r.width*430;
+  const y=(e.clientY-r.top)/r.height*900;
+  ws.send(JSON.stringify({type:"click",x,y}));
+});
+function sendType(){
+  if(!ws)return;
+  const b=document.querySelector("#typeBox");
+  ws.send(JSON.stringify({type:"type",text:b.value}));
+  b.value="";
+}
+function sendKey(key){if(ws)ws.send(JSON.stringify({type:"key",key}))}
+
+status();loadJobs();loadLogs();
+setInterval(status,15000);
+</script>
+</body>
+</html>
