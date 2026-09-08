@@ -32,12 +32,16 @@ small,.muted{color:#8ca4bf}.ok{color:#66e4a4}.bad{color:#ff8f8f}.warn{color:#ffd
   <div class="card">
     <div class="row between">
       <div><b>1. เชื่อม Shopee Session</b><div class="muted">Login ครั้งเดียว แล้ว Session เก็บใน Cloud Volume</div></div>
-      <button onclick="openBrowser()">เปิด Login</button>
+      <div class="row">
+        <button onclick="openBrowser()">เปิด Login / QR</button>
+        <button class="alt" onclick="resetLogin()">เริ่ม Login ใหม่</button>
+      </div>
     </div>
   </div>
 
   <div class="card" id="browserCard">
-    <div class="row between"><b>Remote Browser</b><button class="alt" onclick="closeBrowser()">ปิด</button></div>
+    <div class="row between"><b>Remote Browser — Desktop Mode</b><button class="alt" onclick="closeBrowser()">ปิด</button></div>
+    <div class="result warn" style="margin-bottom:9px">ถ้า Shopee ไม่ส่ง SMS/ลิงก์ยืนยัน ให้ใช้ <b>QR Login</b> บนหน้า Shopee แทน แล้วเปิดแอป Shopee บนมือถือ → สแกน QR/บาร์โค้ด → ยืนยัน Login. ถ้าใช้มือถือเครื่องเดียว ให้เปิด QR บน PC/แท็บเล็ต/มือถืออีกเครื่องเพียงครั้งเดียว หลัง Login สำเร็จไม่ต้องเปิดเครื่องนั้นค้างไว้</div>
     <div class="muted" id="browserUrl" style="margin:7px 0"></div>
     <img id="screen" class="screen" alt="remote browser">
     <div class="kbd">
@@ -139,6 +143,7 @@ async function loadLogs(){
 }
 
 let ws=null;
+let remoteW=1280, remoteH=900;
 async function openBrowser(){
   await api("/api/session/open-login",{method:"POST",body:"{}"});
   document.querySelector("#browserCard").style.display="block";
@@ -147,17 +152,24 @@ async function openBrowser(){
   ws.onmessage=e=>{
     const m=JSON.parse(e.data);
     if(m.type==="frame"){
+      remoteW=Number(m.width||1280);
+      remoteH=Number(m.height||900);
       document.querySelector("#screen").src="data:image/jpeg;base64,"+m.data;
       document.querySelector("#browserUrl").textContent=m.url||"";
     }
   };
 }
+async function resetLogin(){
+  if(ws){ws.close();ws=null;}
+  await api("/api/session/reset-login",{method:"POST",body:"{}"});
+  await openBrowser();
+}
 function closeBrowser(){ if(ws)ws.close(); ws=null; document.querySelector("#browserCard").style.display="none"; status(); }
 document.querySelector("#screen").addEventListener("click",e=>{
   if(!ws)return;
   const r=e.currentTarget.getBoundingClientRect();
-  const x=(e.clientX-r.left)/r.width*430;
-  const y=(e.clientY-r.top)/r.height*900;
+  const x=(e.clientX-r.left)/r.width*remoteW;
+  const y=(e.clientY-r.top)/r.height*remoteH;
   ws.send(JSON.stringify({type:"click",x,y}));
 });
 function sendType(){
