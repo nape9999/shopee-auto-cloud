@@ -181,12 +181,14 @@ let contextPromise = null;
 
 export async function getContext() {
   if (!contextPromise) {
+    // ใช้ desktop browser สำหรับการ Login เพื่อให้ Shopee แสดงตัวเลือก Web/QR ตามปกติ
+    // ไม่พยายามซ่อน automation หรือข้ามระบบความปลอดภัยของ Shopee
     contextPromise = chromium.launchPersistentContext(PROFILE_DIR, {
       headless: true,
       locale: "th-TH",
       timezoneId: "Asia/Bangkok",
-      viewport: { width: 430, height: 900 },
-      userAgent: "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+      viewport: { width: 1280, height: 900 },
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
     }).catch(err => {
       contextPromise = null;
       throw err;
@@ -199,8 +201,26 @@ export async function openLoginPage() {
   const context = await getContext();
   let page = context.pages()[0];
   if (!page) page = await context.newPage();
+  await page.setViewportSize({ width: 1280, height: 900 }).catch(()=>{});
   await page.goto("https://shopee.co.th/buyer/login", { waitUntil:"domcontentloaded", timeout:30000 }).catch(()=>{});
   return page;
+}
+
+export async function resetLoginSession() {
+  const context = await getContext();
+  await context.clearCookies().catch(()=>{});
+  const pages = context.pages();
+  for (const p of pages) {
+    try {
+      await p.goto("https://shopee.co.th/", { waitUntil:"domcontentloaded", timeout:20000 });
+      await p.evaluate(() => {
+        try { localStorage.clear(); } catch {}
+        try { sessionStorage.clear(); } catch {}
+      });
+    } catch {}
+  }
+  logEvent("info", "ล้าง Shopee browser session เพื่อเริ่ม Login ใหม่");
+  return openLoginPage();
 }
 
 export async function getSessionStatus() {
