@@ -4,7 +4,7 @@ import path from "path";
 import { WebSocketServer } from "ws";
 import {
   getJobs, saveJobs, getLogs, logEvent,
-  runJob, startScheduler, openLoginPage, getSessionStatus, getContext
+  runJob, startScheduler, openLoginPage, resetLoginSession, getSessionStatus, getContext
 } from "./automation.mjs";
 
 const PORT = Number(process.env.PORT || 8080);
@@ -105,7 +105,12 @@ app.get("/api/logs", (req,res)=>res.json(getLogs(Number(req.query.limit||100))))
 
 app.post("/api/session/open-login", async (_,res)=>{
   await openLoginPage();
-  res.json({ok:true});
+  res.json({ok:true, mode:"desktop"});
+});
+
+app.post("/api/session/reset-login", async (_,res)=>{
+  await resetLoginSession();
+  res.json({ok:true, mode:"desktop"});
 });
 
 app.get("/api/session/status", async (_,res)=>{
@@ -166,10 +171,13 @@ wss.on("connection", async ws=>{
       if (ws.readyState !== 1) return;
       try {
         const img = await page.screenshot({ type:"jpeg", quality:60 });
+        const vp = page.viewportSize() || { width:1280, height:900 };
         ws.send(JSON.stringify({
           type:"frame",
           data:img.toString("base64"),
-          url:page.url()
+          url:page.url(),
+          width:vp.width,
+          height:vp.height
         }));
       } catch {}
     };
