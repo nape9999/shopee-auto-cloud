@@ -16,8 +16,6 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
 
-import androidx.annotation.Nullable;
-
 import java.util.Locale;
 
 public class AssistTimerService extends Service {
@@ -132,8 +130,11 @@ public class AssistTimerService extends Service {
             } else {
                 vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
             }
-            if (Build.VERSION.SDK_INT >= 26) vibrator.vibrate(VibrationEffect.createOneShot(millis, VibrationEffect.DEFAULT_AMPLITUDE));
-            else vibrator.vibrate(millis);
+            if (Build.VERSION.SDK_INT >= 26) {
+                vibrator.vibrate(VibrationEffect.createOneShot(millis, VibrationEffect.DEFAULT_AMPLITUDE));
+            } else {
+                vibrator.vibrate(millis);
+            }
         } catch (Exception ignored) {}
     }
 
@@ -164,7 +165,6 @@ public class AssistTimerService extends Service {
         super.onDestroy();
     }
 
-    @Nullable
     @Override
     public IBinder onBind(Intent intent) {
         return null;
