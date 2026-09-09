@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <queries>
         <package android:name="com.shopee.th" />
@@ -12,7 +13,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="Shopee Fast Buy"
+        android:label="Shopee Fast Assist"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
@@ -26,24 +27,12 @@
         </activity>
 
         <service
-            android:name=".FastBuyService"
+            android:name=".AssistTimerService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="User-armed local countdown for an accessibility-assisted action in Shopee" />
-        </service>
-
-        <service
-            android:name=".ShopeeAccessibilityService"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
+                android:value="User-started local countdown and vibration reminder for a shopping event" />
         </service>
     </application>
 </manifest>
