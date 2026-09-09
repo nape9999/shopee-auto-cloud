@@ -9,10 +9,8 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
 import android.provider.Settings;
 import android.text.InputType;
-import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
@@ -28,21 +26,19 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 
 public class MainActivity extends Activity {
-    private SharedPreferences p;
-    private EditText url, time, variant, firstButton, secondButton, finalButton, maxPrice, preopen, requiredPrice;
+    private SharedPreferences prefs;
+    private EditText urlField, timeField, noteField;
     private TextView status;
-    private final Handler handler = new Handler();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        p = getSharedPreferences("fastbuy", MODE_PRIVATE);
+        prefs = getSharedPreferences("fast_assist", MODE_PRIVATE);
         buildUi();
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 7);
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 5);
         }
-        handler.post(refreshStatus);
     }
 
     private void buildUi() {
@@ -53,106 +49,111 @@ public class MainActivity extends Activity {
         scroll.addView(root);
 
         TextView title = new TextView(this);
-        title.setText("Shopee Fast Buy — Local");
-        title.setTextSize(24);
-        title.setTextColor(Color.rgb(205, 45, 60));
-        title.setPadding(0,0,0,10);
+        title.setText("Shopee Fast Assist v2");
+        title.setTextSize(25);
+        title.setTextColor(Color.rgb(225, 62, 45));
+        title.setPadding(0, 0, 0, 8);
         root.addView(title);
 
-        TextView privacy = new TextView(this);
-        privacy.setText("ไม่มีสิทธิ์ INTERNET / SMS / Contacts • Accessibility จำกัดเฉพาะแอป Shopee • ไม่เก็บ Password/OTP");
-        privacy.setTextSize(13);
-        privacy.setTextColor(Color.DKGRAY);
-        privacy.setPadding(0,0,0,18);
-        root.addView(privacy);
+        TextView safe = new TextView(this);
+        safe.setText("โหมดช่วยจับเวลา • ไม่ใช้ Accessibility • ไม่อ่านหน้าจอ • ไม่กดปุ่มซื้อ/ชำระเงินแทน");
+        safe.setTextSize(14);
+        safe.setTextColor(Color.DKGRAY);
+        safe.setPadding(0, 0, 0, 18);
+        root.addView(safe);
 
         status = new TextView(this);
+        status.setText("พร้อมตั้งเวลา");
         status.setTextSize(16);
-        status.setPadding(16,14,16,14);
-        status.setBackgroundColor(Color.rgb(240,240,240));
+        status.setPadding(18, 16, 18, 16);
+        status.setBackgroundColor(Color.rgb(242, 242, 242));
         root.addView(status);
 
-        Button preset = button("Preset รองเท้า 99 / US 11");
-        preset.setOnClickListener(v -> {
-            url.setText("https://s.shopee.co.th/9fKbNzpTfL");
-            time.setText("14:00:00");
-            variant.setText("11");
-            firstButton.setText("ซื้อโดยใช้โค้ด|ซื้อเลย");
-            secondButton.setText("ซื้อเลย|ยืนยัน|ตกลง");
-            finalButton.setText("สั่งสินค้า|สั่งซื้อ");
-            maxPrice.setText("150");
-            preopen.setText("15");
-            requiredPrice.setText("");
+        Button presetShoe = button("Preset: Adidas 99 / US 11");
+        presetShoe.setOnClickListener(v -> {
+            urlField.setText("https://s.shopee.co.th/9fKbNzpTfL");
+            timeField.setText("14:00:00");
+            noteField.setText("Adidas Adizero Evo SL • US 11");
             save();
+            status.setText("โหลด Preset รองเท้าแล้ว");
         });
-        root.addView(preset);
+        root.addView(presetShoe);
 
-        url = field(root, "ลิงก์สินค้า", "product_url", "https://s.shopee.co.th/9fKbNzpTfL", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        time = field(root, "เวลาเป้าหมาย HH:mm:ss", "target_time", "14:00:00", InputType.TYPE_CLASS_DATETIME);
-        variant = field(root, "ตัวเลือก/ไซซ์ (ใช้ | คั่นหลายคำ)", "variant", "11", InputType.TYPE_CLASS_TEXT);
-        firstButton = field(root, "ปุ่มแรก", "first_button", "ซื้อโดยใช้โค้ด|ซื้อเลย", InputType.TYPE_CLASS_TEXT);
-        secondButton = field(root, "ปุ่มยืนยัน/ซื้อรอบสอง", "second_button", "ซื้อเลย|ยืนยัน|ตกลง", InputType.TYPE_CLASS_TEXT);
-        finalButton = field(root, "ปุ่มสุดท้าย", "final_button", "สั่งสินค้า|สั่งซื้อ", InputType.TYPE_CLASS_TEXT);
-        maxPrice = field(root, "ยอดชำระสูงสุด (บาท)", "max_price", "150", InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        requiredPrice = field(root, "ข้อความราคาที่ต้องพบก่อนสั่ง (เว้นว่างได้)", "required_price", "", InputType.TYPE_CLASS_TEXT);
-        preopen = field(root, "เปิดสินค้าล่วงหน้า (วินาที)", "preopen_seconds", "15", InputType.TYPE_CLASS_NUMBER);
+        Button presetPhone = button("Preset: Galaxy Z Flip8 / Black");
+        presetPhone.setOnClickListener(v -> {
+            urlField.setText("https://s.shopee.co.th/8fS4AtohXU");
+            timeField.setText("00:00:00");
+            noteField.setText("Galaxy Z Flip8 • Black");
+            save();
+            status.setText("โหลด Preset โทรศัพท์แล้ว");
+        });
+        root.addView(presetPhone);
+
+        urlField = field(root, "ลิงก์สินค้า", "product_url", "https://s.shopee.co.th/8fS4AtohXU", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        timeField = field(root, "เวลาเป้าหมาย HH:mm:ss", "target_time", "00:00:00", InputType.TYPE_CLASS_DATETIME);
+        noteField = field(root, "โน้ตสินค้า / สี / ไซซ์", "product_note", "Black", InputType.TYPE_CLASS_TEXT);
 
         Button save = button("บันทึกค่า");
-        save.setOnClickListener(v -> { save(); toast("บันทึกแล้ว"); });
+        save.setOnClickListener(v -> {
+            save();
+            toast("บันทึกแล้ว");
+        });
         root.addView(save);
 
-        Button accessibility = button("1) เปิดสิทธิ์ Accessibility");
-        accessibility.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        root.addView(accessibility);
-
-        Button open = button("2) เปิดหน้าสินค้า Shopee");
-        open.setOnClickListener(v -> { save(); openShopee(); });
+        Button open = button("เปิดหน้าสินค้า Shopee ตอนนี้");
+        open.setOnClickListener(v -> {
+            save();
+            openShopee();
+        });
         root.addView(open);
 
-        Button test = button("3) TEST ตอนนี้ — หยุดก่อนสั่งซื้อ");
+        Button test = button("TEST 5 วินาที — ทดสอบเสียง/สั่น");
         test.setOnClickListener(v -> {
             save();
-            Intent i = new Intent(this, FastBuyService.class).setAction(FastBuyService.ACTION_TEST);
-            startForegroundServiceCompat(i);
+            long target = System.currentTimeMillis() + 5000L;
+            startAssist(target, false);
+            status.setText("TEST: รอ 5 วินาที");
         });
         root.addView(test);
 
-        Button live = button("4) ARM LIVE ตามเวลาที่ตั้ง");
-        live.setBackgroundColor(Color.rgb(210,35,55));
-        live.setTextColor(Color.WHITE);
-        live.setOnClickListener(v -> armLive());
-        root.addView(live);
+        Button arm = button("ARM + เปิด Shopee แล้วรอวินาทีจริง");
+        arm.setTextColor(Color.WHITE);
+        arm.setBackgroundColor(Color.rgb(225, 62, 45));
+        arm.setOnClickListener(v -> armAndOpen());
+        root.addView(arm);
 
-        Button stop = button("หยุด Auto");
+        Button stop = button("หยุดการจับเวลา");
         stop.setOnClickListener(v -> {
-            Intent i = new Intent(this, FastBuyService.class).setAction(FastBuyService.ACTION_STOP);
-            startForegroundServiceCompat(i);
+            Intent i = new Intent(this, AssistTimerService.class).setAction(AssistTimerService.ACTION_STOP);
+            startForegroundCompat(i);
+            status.setText("หยุดแล้ว");
         });
         root.addView(stop);
 
-        Button battery = button("เปิดการตั้งค่าแบตเตอรี่ (แนะนำ: ไม่จำกัด)");
+        Button battery = button("ตั้งค่าแบตเตอรี่ (แนะนำ: ไม่จำกัด)");
         battery.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
         root.addView(battery);
 
-        TextView note = new TextView(this);
-        note.setText("ก่อน LIVE: ต้องปลดล็อกหน้าจอ, Shopee Login อยู่แล้ว, เลือกวิธีชำระเงินที่ต้องการไว้ก่อน และทดสอบ TEST ให้ผ่านอย่างน้อย 1 ครั้ง\n\nระบบจะหยุดถ้าเจอ CAPTCHA/OTP/ยืนยันผ่านลิงก์ หรืออ่านยอด Checkout ไม่ได้");
-        note.setPadding(0,18,0,0);
-        note.setTextColor(Color.DKGRAY);
-        root.addView(note);
+        TextView instructions = new TextView(this);
+        instructions.setText("วิธีใช้เร็วสุด:\n1) เลือก Preset หรือใส่ลิงก์+เวลา\n2) ก่อนโปรเริ่ม กด ARM + เปิด Shopee\n3) แอปจะจับเวลาอยู่เบื้องหลัง ขณะคุณอยู่หน้าสินค้า\n4) ช่วง 3-2-1 วินาทีจะสั่นเตือน และที่ 0 จะสั่นยาว+เสียง\n5) คุณกดปุ่มซื้อ/สั่งสินค้าบน Shopee เองทันที\n\nแนะนำ: เลือกสี/ไซซ์ วิธีชำระเงิน และคูปองให้พร้อมก่อนเวลา รวมถึงปิด Battery Saver");
+        instructions.setTextSize(14);
+        instructions.setTextColor(Color.DKGRAY);
+        instructions.setPadding(0, 20, 0, 0);
+        root.addView(instructions);
 
         setContentView(scroll);
     }
 
-    private EditText field(LinearLayout root, String label, String key, String def, int inputType) {
-        TextView t = new TextView(this);
-        t.setText(label);
-        t.setTextSize(14);
-        t.setPadding(0,18,0,4);
-        root.addView(t);
+    private EditText field(LinearLayout root, String label, String key, String def, int type) {
+        TextView l = new TextView(this);
+        l.setText(label);
+        l.setTextSize(14);
+        l.setPadding(0, 18, 0, 4);
+        root.addView(l);
         EditText e = new EditText(this);
         e.setSingleLine(true);
-        e.setText(p.getString(key, def));
-        e.setInputType(inputType);
+        e.setInputType(type);
+        e.setText(prefs.getString(key, def));
         root.addView(e, new LinearLayout.LayoutParams(-1, -2));
         return e;
     }
@@ -162,69 +163,64 @@ public class MainActivity extends Activity {
         b.setText(text);
         b.setAllCaps(false);
         b.setTextSize(15);
-        b.setPadding(10,12,10,12);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0,14,0,0);
+        lp.setMargins(0, 14, 0, 0);
         b.setLayoutParams(lp);
         return b;
     }
 
     private void save() {
-        p.edit()
-            .putString("product_url", url.getText().toString().trim())
-            .putString("target_time", time.getText().toString().trim())
-            .putString("variant", variant.getText().toString().trim())
-            .putString("first_button", firstButton.getText().toString().trim())
-            .putString("second_button", secondButton.getText().toString().trim())
-            .putString("final_button", finalButton.getText().toString().trim())
-            .putString("max_price", maxPrice.getText().toString().trim())
-            .putString("required_price", requiredPrice.getText().toString().trim())
-            .putString("preopen_seconds", preopen.getText().toString().trim())
-            .apply();
+        prefs.edit()
+                .putString("product_url", urlField.getText().toString().trim())
+                .putString("target_time", timeField.getText().toString().trim())
+                .putString("product_note", noteField.getText().toString().trim())
+                .apply();
+    }
+
+    private void armAndOpen() {
+        try {
+            save();
+            LocalTime t = LocalTime.parse(timeField.getText().toString().trim(), DateTimeFormatter.ofPattern("HH:mm:ss"));
+            ZonedDateTime now = ZonedDateTime.now(ZoneId.systemDefault());
+            ZonedDateTime target = ZonedDateTime.of(LocalDate.now(), t, ZoneId.systemDefault());
+            if (!target.isAfter(now)) target = target.plusDays(1);
+            long targetMs = target.toInstant().toEpochMilli();
+            startAssist(targetMs, true);
+            status.setText("ARM แล้ว: " + target.format(DateTimeFormatter.ofPattern("dd/MM HH:mm:ss")));
+            openShopee();
+        } catch (Exception e) {
+            toast("รูปแบบเวลาไม่ถูกต้อง ใช้ HH:mm:ss เช่น 00:00:00");
+        }
+    }
+
+    private void startAssist(long targetMs, boolean live) {
+        Intent i = new Intent(this, AssistTimerService.class).setAction(AssistTimerService.ACTION_ARM);
+        i.putExtra("target_ms", targetMs);
+        i.putExtra("note", noteField.getText().toString().trim());
+        i.putExtra("live", live);
+        startForegroundCompat(i);
     }
 
     private void openShopee() {
         try {
-            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url.getText().toString().trim()));
+            String u = urlField.getText().toString().trim();
+            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(u));
             i.setPackage("com.shopee.th");
             startActivity(i);
         } catch (Exception e) {
-            toast("เปิด Shopee ไม่สำเร็จ: " + e.getMessage());
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(urlField.getText().toString().trim())));
+            } catch (Exception ignored) {
+                toast("เปิดลิงก์สินค้าไม่สำเร็จ");
+            }
         }
     }
 
-    private void armLive() {
-        try {
-            save();
-            LocalTime lt = LocalTime.parse(time.getText().toString().trim(), DateTimeFormatter.ofPattern("HH:mm:ss"));
-            ZonedDateTime now = ZonedDateTime.now(ZoneId.systemDefault());
-            ZonedDateTime target = ZonedDateTime.of(LocalDate.now(), lt, ZoneId.systemDefault());
-            if (!target.isAfter(now)) target = target.plusDays(1);
-            Intent i = new Intent(this, FastBuyService.class).setAction(FastBuyService.ACTION_ARM);
-            i.putExtra("target_ms", target.toInstant().toEpochMilli());
-            startForegroundServiceCompat(i);
-            toast("ARM แล้ว: " + target.format(DateTimeFormatter.ofPattern("dd/MM HH:mm:ss")));
-        } catch (Exception e) {
-            toast("เวลาไม่ถูกต้อง ใช้รูปแบบ HH:mm:ss");
-        }
-    }
-
-    private void startForegroundServiceCompat(Intent i) {
+    private void startForegroundCompat(Intent i) {
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(i); else startService(i);
     }
 
-    private final Runnable refreshStatus = new Runnable() {
-        @Override public void run() {
-            String s = p.getString("status", "ยังไม่ทำงาน");
-            status.setText("สถานะ: " + s);
-            handler.postDelayed(this, 500);
-        }
-    };
-
-    private void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_LONG).show(); }
-
-    @Override protected void onDestroy() {
-        handler.removeCallbacks(refreshStatus);
-        super.onDestroy();
+    private void toast(String s) {
+        Toast.makeText(this, s, Toast.LENGTH_LONG).show();
     }
 }
