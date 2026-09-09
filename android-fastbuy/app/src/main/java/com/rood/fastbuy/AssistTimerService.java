@@ -81,7 +81,7 @@ public class AssistTimerService extends Service {
                 pulse(700);
                 try { tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 500); } catch (Exception ignored) {}
                 updateNotification("0.000 — กดซื้อทันที", 0);
-                handler.postDelayed(this::stopTimer, 10000L);
+                handler.postDelayed(AssistTimerService.this::stopTimer, 10000L);
                 return;
             }
 
