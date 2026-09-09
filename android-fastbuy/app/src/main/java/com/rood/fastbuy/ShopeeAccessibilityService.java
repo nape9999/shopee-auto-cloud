@@ -1,9 +1,13 @@
 package com.rood.fastbuy;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.GestureDescription;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Path;
+import android.graphics.Rect;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Handler;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -21,8 +25,28 @@ public class ShopeeAccessibilityService extends AccessibilityService {
     private final Handler h = new Handler();
     private long lastHandle = 0;
     private boolean busy = false;
+    private boolean pollStarted = false;
+
     private static final String[] SECURITY = new String[]{
             "captcha", "security verification", "verify you are human", "ยืนยันผ่านลิงก์", "รหัส otp", "ยืนยันตัวตน"
+    };
+
+    private final Runnable poller = new Runnable() {
+        @Override public void run() {
+            try {
+                if (p != null && p.getBoolean("flow_active", false)) {
+                    long now = System.currentTimeMillis();
+                    long deadline = p.getLong("flow_deadline", now + 1);
+                    if (now > deadline) {
+                        stopFlow("หมดเวลา ระบบหยุดโดยไม่สั่งซื้อ", true);
+                    } else if (!busy) {
+                        handle();
+                    }
+                }
+            } finally {
+                h.postDelayed(this, 90);
+            }
+        }
     };
 
     public static ShopeeAccessibilityService instance() { return INSTANCE; }
@@ -32,6 +56,10 @@ public class ShopeeAccessibilityService extends AccessibilityService {
         INSTANCE = this;
         p = getSharedPreferences("fastbuy", MODE_PRIVATE);
         setStatus("Accessibility พร้อม");
+        if (!pollStarted) {
+            pollStarted = true;
+            h.post(poller);
+        }
     }
 
     public void launchShopee(String url) {
@@ -53,7 +81,7 @@ public class ShopeeAccessibilityService extends AccessibilityService {
             stopFlow("หมดเวลา ระบบหยุดโดยไม่สั่งซื้อ", true);
             return;
         }
-        if (now - lastHandle < 70 || busy) return;
+        if (now - lastHandle < 45 || busy) return;
         lastHandle = now;
         h.post(this::handle);
     }
@@ -63,7 +91,12 @@ public class ShopeeAccessibilityService extends AccessibilityService {
         busy = true;
         try {
             AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root == null) return;
+            if (root == null) {
+                setStatus("รอหน้า Shopee พร้อม...");
+                return;
+            }
+            if (root.getPackageName() != null && !"com.shopee.th".contentEquals(root.getPackageName())) return;
+
             List<NodeText> nodes = flatten(root);
             if (containsAny(nodes, SECURITY)) {
                 stopFlow("พบ CAPTCHA/OTP/Verification จึงหยุด", true);
@@ -73,10 +106,15 @@ public class ShopeeAccessibilityService extends AccessibilityService {
             String state = p.getString("flow_state", "FIRST");
             if ("FIRST".equals(state)) {
                 AccessibilityNodeInfo n = findAny(nodes, split(p.getString("first_button", "ซื้อโดยใช้โค้ด|ซื้อเลย")), false);
-                if (n != null && click(n)) {
-                    p.edit().putString("flow_state", "VARIANT").apply();
-                    setStatus("กดปุ่มแรกแล้ว");
-                    h.postDelayed(this::handle, 110);
+                if (n != null) {
+                    setStatus("พบปุ่มแรก: " + textOf(n));
+                    if (click(n)) {
+                        p.edit().putString("flow_state", "VARIANT").apply();
+                        setStatus("กดปุ่มแรกแล้ว");
+                        h.postDelayed(this::handle, 80);
+                    }
+                } else {
+                    setStatus("รอปุ่มแรก...");
                 }
                 return;
             }
@@ -85,24 +123,33 @@ public class ShopeeAccessibilityService extends AccessibilityService {
                 String v = p.getString("variant", "").trim();
                 if (!v.isEmpty()) {
                     AccessibilityNodeInfo n = findAny(nodes, split(v), true);
-                    if (n != null && click(n)) setStatus("เลือกตัวเลือก: " + textOf(n));
+                    if (n != null && click(n)) {
+                        setStatus("เลือกตัวเลือก: " + textOf(n));
+                    } else {
+                        setStatus("ยังไม่พบตัวเลือก: " + v + " — ไปขั้นถัดไป");
+                    }
                 }
                 p.edit().putString("flow_state", "SECOND").apply();
-                h.postDelayed(this::handle, 90);
+                h.postDelayed(this::handle, 70);
                 return;
             }
 
             if ("SECOND".equals(state)) {
                 if (findAny(nodes, split(p.getString("final_button", "สั่งสินค้า|สั่งซื้อ")), true) != null) {
                     p.edit().putString("flow_state", "CHECKOUT").apply();
-                    h.postDelayed(this::handle, 60);
+                    h.postDelayed(this::handle, 50);
                     return;
                 }
                 AccessibilityNodeInfo n = findAny(nodes, split(p.getString("second_button", "ซื้อเลย|ยืนยัน|ตกลง")), false);
-                if (n != null && click(n)) {
-                    p.edit().putString("flow_state", "CHECKOUT").apply();
-                    setStatus("กดปุ่มยืนยัน/ซื้อรอบสองแล้ว");
-                    h.postDelayed(this::handle, 220);
+                if (n != null) {
+                    setStatus("พบปุ่มรอบสอง: " + textOf(n));
+                    if (click(n)) {
+                        p.edit().putString("flow_state", "CHECKOUT").apply();
+                        setStatus("กดปุ่มยืนยัน/ซื้อรอบสองแล้ว");
+                        h.postDelayed(this::handle, 160);
+                    }
+                } else {
+                    setStatus("รอปุ่มยืนยัน/ซื้อรอบสอง...");
                 }
                 return;
             }
@@ -180,12 +227,38 @@ public class ShopeeAccessibilityService extends AccessibilityService {
     }
 
     private boolean click(AccessibilityNodeInfo n) {
+        if (n == null) return false;
         AccessibilityNodeInfo cur = n;
-        for (int i = 0; i < 6 && cur != null; i++) {
-            if (cur.isClickable() && cur.isEnabled()) return cur.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        for (int i = 0; i < 7 && cur != null; i++) {
+            if (cur.isClickable() && cur.isEnabled()) {
+                try {
+                    if (cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+                } catch (Exception ignored) {}
+            }
             cur = cur.getParent();
         }
-        return n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        try {
+            if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+        } catch (Exception ignored) {}
+        return tapCenter(n);
+    }
+
+    private boolean tapCenter(AccessibilityNodeInfo n) {
+        if (Build.VERSION.SDK_INT < 24 || n == null || !n.isVisibleToUser()) return false;
+        Rect r = new Rect();
+        n.getBoundsInScreen(r);
+        if (r.isEmpty()) return false;
+        float x = r.centerX();
+        float y = r.centerY();
+        Path path = new Path();
+        path.moveTo(x, y);
+        GestureDescription.StrokeDescription stroke = new GestureDescription.StrokeDescription(path, 0, 35);
+        GestureDescription gesture = new GestureDescription.Builder().addStroke(stroke).build();
+        try {
+            return dispatchGesture(gesture, null, null);
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private Double extractCheckoutTotal(List<NodeText> nodes) {
@@ -243,6 +316,8 @@ public class ShopeeAccessibilityService extends AccessibilityService {
     }
 
     @Override public void onDestroy() {
+        h.removeCallbacks(poller);
+        pollStarted = false;
         if (INSTANCE == this) INSTANCE = null;
         super.onDestroy();
     }
