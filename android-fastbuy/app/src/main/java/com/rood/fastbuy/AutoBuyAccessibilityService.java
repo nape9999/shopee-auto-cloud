@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.graphics.Path;
+import android.graphics.Rect;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -29,10 +30,11 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
     public static final String ACTION_TRIGGER = "com.rood.fastbuy.AUTO_TRIGGER";
 
     private static final String SHOPEE_PACKAGE = "com.shopee.th";
-    private static final long FLOW_TIMEOUT_MS = 9000L;
-    private static final long PRICE_PHASE_TIMEOUT_MS = 3500L;
+    private static final long FLOW_TIMEOUT_MS = 10000L;
+    private static final long PRICE_PHASE_TIMEOUT_MS = 4000L;
     private static final long CHECK_INTERVAL_MS = 80L;
     private static final int MAX_REFRESHES = 3;
+    private static final int MAX_VARIANT_CLICKS = 4;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private SharedPreferences prefs;
@@ -41,13 +43,17 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
     private boolean running = false;
     private boolean testOnly = false;
     private boolean autoPlaceOrder = false;
+    private boolean variantInteracted = false;
+    private boolean variantConfirmClicked = false;
     private double targetPrice = 99.0;
     private double maxTotal = 150.0;
     private long startedAt = 0L;
     private long pricePhaseStartedAt = 0L;
     private long lastRefreshAt = 0L;
     private int refreshCount = 0;
-    private int stage = 0; // 1=wait promo price, 2=wait checkout
+    private int stage = 0;
+    private int variantClicks = 0;
+    private final List<Integer> selectedVariantRows = new ArrayList<>();
 
     private static final Pattern MONEY_PATTERN = Pattern.compile(
             "(?:฿|THB\\s*)\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)",
@@ -87,6 +93,10 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
         lastRefreshAt = 0L;
         refreshCount = 0;
         stage = 1;
+        variantClicks = 0;
+        variantInteracted = false;
+        variantConfirmClicked = false;
+        selectedVariantRows.clear();
 
         if (!isShopeeForeground()) {
             stopFlow("หน้าสินค้าไม่ได้อยู่ด้านหน้า — หยุดเพื่อความปลอดภัย");
@@ -138,14 +148,9 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
                     if (buy != null && clickNode(buy)) {
                         stage = 2;
                         vibrate(90);
-                        handler.postDelayed(this, 140L);
+                        handler.postDelayed(this, 150L);
                         return;
                     }
-                }
-
-                if (hasVariantSelectionPrompt(root)) {
-                    stopFlow("ยังมีหน้าต่างเลือกสี/ไซซ์ — กรุณาเลือกไว้ก่อนเวลา");
-                    return;
                 }
 
                 long sincePricePhase = now - pricePhaseStartedAt;
@@ -167,8 +172,45 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
 
             if (stage == 2) {
                 if (hasVariantSelectionPrompt(root)) {
-                    stopFlow("ระบบขอเลือกตัวเลือกสินค้า — หยุดเพื่อไม่เลือกผิด");
+                    if (variantClicks >= MAX_VARIANT_CLICKS) {
+                        stopFlow("เลือกตัวเลือกอัตโนมัติไม่สำเร็จ — หยุดเพื่อความปลอดภัย");
+                        return;
+                    }
+
+                    AccessibilityNodeInfo option = findFirstAvailableVariantOption(root);
+                    if (option != null && clickNode(option)) {
+                        Rect r = new Rect();
+                        option.getBoundsInScreen(r);
+                        selectedVariantRows.add(r.centerY());
+                        variantClicks++;
+                        variantInteracted = true;
+                        vibrate(60);
+                        handler.postDelayed(this, 180L);
+                        return;
+                    }
+
+                    if (variantInteracted && !variantConfirmClicked) {
+                        AccessibilityNodeInfo confirmBuy = findBuyButton(root);
+                        if (confirmBuy != null && clickNode(confirmBuy)) {
+                            variantConfirmClicked = true;
+                            vibrate(70);
+                            handler.postDelayed(this, 180L);
+                            return;
+                        }
+                    }
+
+                    stopFlow("ไม่พบตัวเลือกสินค้าที่กดได้ — หยุดเพื่อความปลอดภัย");
                     return;
+                }
+
+                if (variantInteracted && !variantConfirmClicked) {
+                    AccessibilityNodeInfo confirmBuy = findBuyButton(root);
+                    if (confirmBuy != null && clickNode(confirmBuy)) {
+                        variantConfirmClicked = true;
+                        vibrate(70);
+                        handler.postDelayed(this, 180L);
+                        return;
+                    }
                 }
 
                 AccessibilityNodeInfo order = findOrderButton(root);
@@ -232,13 +274,6 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
         lastRefreshAt = System.currentTimeMillis();
     }
 
-    /**
-     * Price ceiling mode.
-     * The automatic purchase condition is true only when the price that is
-     * actually exposed on the buy button is <= the user's configured limit.
-     * If the buy button does not expose a readable price, the flow fails closed
-     * instead of using unrelated voucher/shipping numbers elsewhere on screen.
-     */
     private boolean isPromoPriceReady(AccessibilityNodeInfo root) {
         AccessibilityNodeInfo buy = findBuyButton(root);
         if (buy == null) return false;
@@ -249,6 +284,76 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
         }
 
         return buttonPrice <= targetPrice + 0.001;
+    }
+
+    private AccessibilityNodeInfo findFirstAvailableVariantOption(AccessibilityNodeInfo root) {
+        AccessibilityNodeInfo prompt = findFirstContaining(
+                root,
+                "กรุณาเลือกตัวเลือกสินค้า",
+                "เลือกตัวเลือกสินค้า",
+                "เลือกสี",
+                "เลือกไซซ์",
+                "Select variation");
+
+        AccessibilityNodeInfo scope = prompt != null ? prompt : root;
+        for (int i = 0; i < 4 && scope != null && scope.getParent() != null; i++) {
+            scope = scope.getParent();
+        }
+
+        List<AccessibilityNodeInfo> candidates = new ArrayList<>();
+        collectVariantCandidates(scope != null ? scope : root, candidates);
+
+        for (AccessibilityNodeInfo node : candidates) {
+            Rect r = new Rect();
+            node.getBoundsInScreen(r);
+            int cy = r.centerY();
+            boolean sameRow = false;
+            for (int usedY : selectedVariantRows) {
+                if (Math.abs(usedY - cy) < 72) {
+                    sameRow = true;
+                    break;
+                }
+            }
+            if (!sameRow) return node;
+        }
+
+        return null;
+    }
+
+    private void collectVariantCandidates(AccessibilityNodeInfo node, List<AccessibilityNodeInfo> out) {
+        if (node == null) return;
+
+        String text = nodeText(node).trim();
+        Rect r = new Rect();
+        node.getBoundsInScreen(r);
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+
+        boolean inLowerArea = r.centerY() > dm.heightPixels * 0.35f;
+        boolean reasonableSize = r.width() > 40 && r.height() > 25 && r.height() < dm.heightPixels * 0.18f;
+        boolean usable = node.isEnabled() && node.isClickable() && !node.isSelected() && !node.isChecked();
+        boolean hasText = !text.isEmpty() && text.length() <= 48;
+
+        if (usable && hasText && inLowerArea && reasonableSize && !isExcludedVariantText(text)) {
+            out.add(node);
+        }
+
+        for (int i = 0; i < node.getChildCount(); i++) {
+            collectVariantCandidates(node.getChild(i), out);
+        }
+    }
+
+    private boolean isExcludedVariantText(String text) {
+        String t = text.toLowerCase(Locale.ROOT);
+        String[] excluded = new String[]{
+                "ซื้อ", "สั่ง", "ยกเลิก", "ปิด", "จำนวน", "เพิ่ม", "ลด",
+                "คูปอง", "โค้ด", "ส่งฟรี", "จัดส่ง", "ตะกร้า", "แชท",
+                "เลือกตัวเลือก", "เลือกสี", "เลือกไซซ์", "select variation",
+                "confirm", "ตกลง", "ok"
+        };
+        for (String e : excluded) {
+            if (t.contains(e.toLowerCase(Locale.ROOT))) return true;
+        }
+        return false;
     }
 
     private AccessibilityNodeInfo findBuyButton(AccessibilityNodeInfo root) {
