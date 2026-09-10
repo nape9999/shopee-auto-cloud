@@ -21,12 +21,13 @@ import java.util.Locale;
 public class AssistTimerService extends Service {
     public static final String ACTION_ARM = "com.rood.fastbuy.ARM_ASSIST";
     public static final String ACTION_STOP = "com.rood.fastbuy.STOP_ASSIST";
+
     private static final int NOTIF_ID = 2202;
-    private static final String CHANNEL_ID = "fast_assist_timer";
+    private static final String CHANNEL_ID = "f_v4_timer";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long targetMs = 0L;
-    private String note = "";
+    private String productUrl = "";
     private boolean signaled3, signaled2, signaled1, signaled0;
     private ToneGenerator tone;
 
@@ -41,20 +42,23 @@ public class AssistTimerService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null) return START_NOT_STICKY;
         String action = intent.getAction();
+
         if (ACTION_STOP.equals(action)) {
             stopTimer();
             return START_NOT_STICKY;
         }
+
         if (ACTION_ARM.equals(action)) {
             targetMs = intent.getLongExtra("target_ms", 0L);
-            note = intent.getStringExtra("note");
-            if (note == null) note = "";
+            productUrl = intent.getStringExtra("product_url");
+            if (productUrl == null) productUrl = "";
             signaled3 = signaled2 = signaled1 = signaled0 = false;
-            startForeground(NOTIF_ID, buildNotification("กำลังจับเวลา", targetMs - System.currentTimeMillis()));
+            startForeground(NOTIF_ID, buildNotification("F กำลังจับเวลา", targetMs - System.currentTimeMillis(), true));
             handler.removeCallbacks(tick);
             handler.post(tick);
             return START_STICKY;
         }
+
         return START_NOT_STICKY;
     }
 
@@ -66,36 +70,39 @@ public class AssistTimerService extends Service {
 
             if (remain <= 3000 && remain > 2000 && !signaled3) {
                 signaled3 = true;
-                pulse(70);
+                pulse(60);
             }
             if (remain <= 2000 && remain > 1000 && !signaled2) {
                 signaled2 = true;
-                pulse(90);
+                pulse(80);
             }
             if (remain <= 1000 && remain > 0 && !signaled1) {
                 signaled1 = true;
-                pulse(120);
+                pulse(110);
             }
+
             if (remain <= 0 && !signaled0) {
                 signaled0 = true;
-                pulse(250);
-                try { tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 180); } catch (Exception ignored) {}
-                updateNotification("0.000 — เริ่มรีราคาอัตโนมัติ", 0);
+                pulse(260);
+                try {
+                    tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 180);
+                } catch (Exception ignored) {
+                }
 
-                Intent trigger = new Intent(AutoBuyAccessibilityService.ACTION_TRIGGER);
-                trigger.setPackage(getPackageName());
-                sendBroadcast(trigger);
+                Intent refresh = new Intent(MainActivity.ACTION_REFRESH_NOW);
+                refresh.setPackage(getPackageName());
+                sendBroadcast(refresh);
 
-                handler.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        stopTimer();
-                    }
-                }, 12000L);
+                NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                nm.notify(NOTIF_ID, buildNotification("ถึงเวลาแล้ว • รีเฟรชสินค้าใน F", 0L, false));
+
+                handler.postDelayed(this::stopTimer, 4000L);
                 return;
             }
 
-            updateNotification("กำลังจับเวลา", remain);
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            nm.notify(NOTIF_ID, buildNotification("F กำลังจับเวลา", remain, true));
+
             long next;
             if (remain > 5000) next = 500L;
             else if (remain > 1000) next = 50L;
@@ -104,14 +111,13 @@ public class AssistTimerService extends Service {
         }
     };
 
-    private void updateNotification(String title, long remain) {
-        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        nm.notify(NOTIF_ID, buildNotification(title, remain));
-    }
-
-    private Notification buildNotification(String title, long remain) {
+    private Notification buildNotification(String title, long remain, boolean ongoing) {
         Intent openApp = new Intent(this, MainActivity.class);
-        PendingIntent pi = PendingIntent.getActivity(this, 0, openApp,
+        openApp.putExtra("refresh_on_open", remain <= 0);
+        PendingIntent pi = PendingIntent.getActivity(
+                this,
+                0,
+                openApp,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         String text;
@@ -120,16 +126,16 @@ public class AssistTimerService extends Service {
             long ms = remain % 1000;
             text = String.format(Locale.US, "%02d:%02d.%03d", sec / 60, sec % 60, ms);
         } else {
-            text = "เริ่มรีราคาแล้ว";
+            text = "แตะเพื่อเปิด F และดูสินค้าล่าสุด";
         }
-        if (!note.isEmpty()) text += " • " + note;
 
         return new Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
                 .setContentTitle(title)
                 .setContentText(text)
-                .setOngoing(remain > 0)
-                .setOnlyAlertOnce(true)
+                .setOngoing(ongoing)
+                .setOnlyAlertOnce(ongoing)
+                .setAutoCancel(!ongoing)
                 .setContentIntent(pi)
                 .build();
     }
@@ -143,28 +149,33 @@ public class AssistTimerService extends Service {
             } else {
                 vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
             }
+
             if (Build.VERSION.SDK_INT >= 26) {
                 vibrator.vibrate(VibrationEffect.createOneShot(millis, VibrationEffect.DEFAULT_AMPLITUDE));
             } else {
                 vibrator.vibrate(millis);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
     }
 
     private void createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel c = new NotificationChannel(CHANNEL_ID, "Fast Assist Timer", NotificationManager.IMPORTANCE_LOW);
-            c.setDescription("ตัวจับเวลาสำหรับเริ่มรีราคา Flash Sale");
-            c.setSound(null, null);
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "F Timer",
+                    NotificationManager.IMPORTANCE_LOW);
+            channel.setDescription("จับเวลาเพื่อรีเฟรชสินค้าภายใน F");
+            channel.setSound(null, null);
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            nm.createNotificationChannel(c);
+            nm.createNotificationChannel(channel);
         }
     }
 
     private void stopTimer() {
         handler.removeCallbacksAndMessages(null);
         targetMs = 0L;
-        stopForeground(true);
+        stopForeground(false);
         stopSelf();
     }
 
