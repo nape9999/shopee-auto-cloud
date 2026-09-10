@@ -96,7 +96,7 @@ public class AssistTimerService extends Service {
                 NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
                 nm.notify(NOTIF_ID, buildNotification("ถึงเวลาแล้ว • รีเฟรชสินค้าใน F", 0L, false));
 
-                handler.postDelayed(this::stopTimer, 4000L);
+                handler.postDelayed(() -> AssistTimerService.this.stopTimer(), 4000L);
                 return;
             }
 
