@@ -49,7 +49,9 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
     private int refreshCount = 0;
     private int stage = 0; // 1=wait promo price, 2=wait checkout
 
-    private static final Pattern MONEY_PATTERN = Pattern.compile("(?:฿|THB\\s*)\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MONEY_PATTERN = Pattern.compile(
+            "(?:฿|THB\\s*)\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)",
+            Pattern.CASE_INSENSITIVE);
 
     @Override
     protected void onServiceConnected() {
@@ -63,6 +65,7 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
                 }
             }
         };
+
         IntentFilter filter = new IntentFilter(ACTION_TRIGGER);
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
@@ -73,6 +76,7 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
 
     private void startAutoFlow() {
         if (prefs == null) prefs = getSharedPreferences("fast_assist", MODE_PRIVATE);
+
         running = true;
         testOnly = prefs.getBoolean("test_only", false);
         autoPlaceOrder = prefs.getBoolean("auto_place_order", false);
@@ -85,7 +89,7 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
         stage = 1;
 
         if (!isShopeeForeground()) {
-            stopFlow("Shopee ไม่ได้อยู่ด้านหน้า — หยุดเพื่อความปลอดภัย");
+            stopFlow("หน้าสินค้าไม่ได้อยู่ด้านหน้า — หยุดเพื่อความปลอดภัย");
             return;
         }
 
@@ -95,10 +99,14 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
         }
 
         performRefresh();
+
         if (testOnly) {
-            handler.postDelayed(() -> stopFlow("TEST สำเร็จ: สั่งรีเฟรชแล้ว และไม่ได้กดซื้อ"), 900L);
+            handler.postDelayed(
+                    () -> stopFlow("TEST สำเร็จ: สั่งรีเฟรชแล้ว และไม่ได้กดซื้อ"),
+                    900L);
             return;
         }
+
         handler.postDelayed(scanLoop, 220L);
     }
 
@@ -106,6 +114,7 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
         @Override
         public void run() {
             if (!running) return;
+
             long now = System.currentTimeMillis();
             if (now - startedAt > FLOW_TIMEOUT_MS) {
                 stopFlow("หมดเวลารอ — ไม่กดสั่งซื้อ");
@@ -141,44 +150,62 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
 
                 long sincePricePhase = now - pricePhaseStartedAt;
                 if (sincePricePhase > PRICE_PHASE_TIMEOUT_MS) {
-                    stopFlow("ราคาโปรยังไม่เปลี่ยนเป็นเงื่อนไขที่ตั้งไว้ — ไม่ซื้อ");
+                    stopFlow(String.format(
+                            Locale.US,
+                            "ยังไม่พบราคาบนปุ่มที่ ≤ %.2f บาท — ไม่ซื้อ",
+                            targetPrice));
                     return;
                 }
 
                 if (refreshCount < MAX_REFRESHES && now - lastRefreshAt >= 700L) {
                     performRefresh();
                 }
+
                 handler.postDelayed(this, CHECK_INTERVAL_MS);
                 return;
             }
 
             if (stage == 2) {
                 if (hasVariantSelectionPrompt(root)) {
-                    stopFlow("Shopee ขอเลือกตัวเลือกสินค้า — หยุดเพื่อไม่เลือกผิด");
+                    stopFlow("ระบบขอเลือกตัวเลือกสินค้า — หยุดเพื่อไม่เลือกผิด");
                     return;
                 }
 
                 AccessibilityNodeInfo order = findOrderButton(root);
                 if (order != null) {
                     Double total = findCheckoutTotal(root);
-                    if (total == null) {
+                    if (total == null || !Double.isFinite(total)) {
                         handler.postDelayed(this, CHECK_INTERVAL_MS);
                         return;
                     }
+
                     if (total > maxTotal + 0.001) {
-                        stopFlow(String.format(Locale.US, "ยอดรวม %.2f เกินเพดาน %.2f — ไม่ซื้อ", total, maxTotal));
+                        stopFlow(String.format(
+                                Locale.US,
+                                "ยอดรวม %.2f เกินเพดาน %.2f — ไม่ซื้อ",
+                                total,
+                                maxTotal));
                         return;
                     }
+
                     if (!autoPlaceOrder) {
-                        stopFlow(String.format(Locale.US, "ถึง Checkout แล้ว ยอด %.2f — รอคุณกดสั่งซื้อ", total));
+                        stopFlow(String.format(
+                                Locale.US,
+                                "ถึง Checkout แล้ว ยอด %.2f — รอคุณกดสั่งซื้อ",
+                                total));
                         return;
                     }
+
                     if (clickNode(order)) {
                         vibrate(300);
-                        stopFlow(String.format(Locale.US, "กดสั่งซื้อแล้ว • ยอดตรวจพบ %.2f", total));
+                        stopFlow(String.format(
+                                Locale.US,
+                                "กดสั่งซื้อแล้ว • ยอดตรวจพบ %.2f",
+                                total));
                         return;
                     }
                 }
+
                 handler.postDelayed(this, CHECK_INTERVAL_MS);
             }
         }
@@ -186,58 +213,57 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
 
     private void performRefresh() {
         if (!running || !isShopeeForeground()) return;
+
         DisplayMetrics dm = getResources().getDisplayMetrics();
         float x = dm.widthPixels * 0.50f;
         float y1 = dm.heightPixels * 0.28f;
         float y2 = dm.heightPixels * 0.72f;
+
         Path path = new Path();
         path.moveTo(x, y1);
         path.lineTo(x, y2);
+
         GestureDescription gesture = new GestureDescription.Builder()
                 .addStroke(new GestureDescription.StrokeDescription(path, 0, 180))
                 .build();
+
         dispatchGesture(gesture, null, null);
         refreshCount++;
         lastRefreshAt = System.currentTimeMillis();
     }
 
+    /**
+     * Price ceiling mode.
+     * The automatic purchase condition is true only when the price that is
+     * actually exposed on the buy button is <= the user's configured limit.
+     * If the buy button does not expose a readable price, the flow fails closed
+     * instead of using unrelated voucher/shipping numbers elsewhere on screen.
+     */
     private boolean isPromoPriceReady(AccessibilityNodeInfo root) {
         AccessibilityNodeInfo buy = findBuyButton(root);
         if (buy == null) return false;
 
-        String buyText = nodeText(buy);
-        Double buttonPrice = firstMoney(buyText);
-        if (buttonPrice != null) {
-            return buttonPrice <= targetPrice + 0.001;
+        Double buttonPrice = firstMoney(nodeText(buy));
+        if (buttonPrice == null || !Double.isFinite(buttonPrice) || buttonPrice <= 0) {
+            return false;
         }
 
-        return containsExactTargetPrice(root, targetPrice);
-    }
-
-    private boolean containsExactTargetPrice(AccessibilityNodeInfo node, double target) {
-        if (node == null) return false;
-        String t = nodeText(node);
-        Matcher m = MONEY_PATTERN.matcher(t);
-        while (m.find()) {
-            double v = parseMoneyNumber(m.group(1));
-            if (Math.abs(v - target) < 0.01) return true;
-        }
-        for (int i = 0; i < node.getChildCount(); i++) {
-            if (containsExactTargetPrice(node.getChild(i), target)) return true;
-        }
-        return false;
+        return buttonPrice <= targetPrice + 0.001;
     }
 
     private AccessibilityNodeInfo findBuyButton(AccessibilityNodeInfo root) {
-        return findFirstContaining(root,
+        return findFirstContaining(
+                root,
                 "ซื้อโดยใช้โค้ด",
                 "ซื้อเลย",
                 "ซื้อสินค้า");
     }
 
     private AccessibilityNodeInfo findOrderButton(AccessibilityNodeInfo root) {
-        return findFirstContaining(root,
+        return findFirstContaining(
+                root,
                 "สั่งซื้อ",
+                "สั่งสินค้า",
                 "ทำการสั่งซื้อ",
                 "Place Order");
     }
@@ -252,11 +278,21 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
 
     private boolean hasSecurityChallenge(AccessibilityNodeInfo root) {
         if (root == null) return false;
+
         String[] words = new String[]{
-                "CAPTCHA", "captcha", "OTP", "รหัส OTP", "ยืนยันตัวตน",
-                "ตรวจสอบความปลอดภัย", "กรุณาตรวจสอบ", "ยืนยันหมายเลขโทรศัพท์",
-                "verification", "verify your identity", "robot"
+                "CAPTCHA",
+                "captcha",
+                "OTP",
+                "รหัส OTP",
+                "ยืนยันตัวตน",
+                "ตรวจสอบความปลอดภัย",
+                "กรุณาตรวจสอบ",
+                "ยืนยันหมายเลขโทรศัพท์",
+                "verification",
+                "verify your identity",
+                "robot"
         };
+
         for (String w : words) {
             if (anyTextContains(root, w)) return true;
         }
@@ -265,29 +301,38 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
 
     private Double findCheckoutTotal(AccessibilityNodeInfo root) {
         String[] labels = new String[]{
-                "ยอดชำระทั้งหมด", "ยอดชำระ", "ยอดรวมทั้งหมด", "ยอดรวม",
-                "รวมการสั่งซื้อ", "Total Payment", "Order Total"
+                "ยอดชำระทั้งหมด",
+                "ยอดชำระ",
+                "ยอดรวมทั้งหมด",
+                "ยอดรวม",
+                "รวมการสั่งซื้อ",
+                "Total Payment",
+                "Order Total"
         };
+
         for (String label : labels) {
             AccessibilityNodeInfo n = findFirstContaining(root, label);
             if (n == null) continue;
 
             Double same = firstMoney(nodeText(n));
-            if (same != null) return same;
+            if (same != null && Double.isFinite(same)) return same;
 
             AccessibilityNodeInfo p = n.getParent();
             if (p != null) {
                 int index = indexOfChild(p, n);
                 int start = Math.max(0, index);
                 int end = Math.min(p.getChildCount() - 1, index + 4);
+
                 for (int i = start; i <= end; i++) {
                     Double v = firstMoneyRecursive(p.getChild(i), 2);
-                    if (v != null) return v;
+                    if (v != null && Double.isFinite(v)) return v;
                 }
+
                 Double parentValue = firstMoneyRecursive(p, 2);
-                if (parentValue != null) return parentValue;
+                if (parentValue != null && Double.isFinite(parentValue)) return parentValue;
             }
         }
+
         return null;
     }
 
@@ -302,27 +347,34 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
 
     private Double firstMoneyRecursive(AccessibilityNodeInfo node, int depth) {
         if (node == null || depth < 0) return null;
+
         Double v = firstMoney(nodeText(node));
-        if (v != null) return v;
+        if (v != null && Double.isFinite(v)) return v;
+
         for (int i = 0; i < node.getChildCount(); i++) {
             Double child = firstMoneyRecursive(node.getChild(i), depth - 1);
-            if (child != null) return child;
+            if (child != null && Double.isFinite(child)) return child;
         }
+
         return null;
     }
 
     private AccessibilityNodeInfo findFirstContaining(AccessibilityNodeInfo node, String... needles) {
         if (node == null) return null;
+
         String text = nodeText(node);
         for (String needle : needles) {
-            if (!needle.isEmpty() && text.toLowerCase(Locale.ROOT).contains(needle.toLowerCase(Locale.ROOT))) {
+            if (!needle.isEmpty()
+                    && text.toLowerCase(Locale.ROOT).contains(needle.toLowerCase(Locale.ROOT))) {
                 return node;
             }
         }
+
         for (int i = 0; i < node.getChildCount(); i++) {
             AccessibilityNodeInfo found = findFirstContaining(node.getChild(i), needles);
             if (found != null) return found;
         }
+
         return null;
     }
 
@@ -353,6 +405,7 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
 
     private String nodeText(AccessibilityNodeInfo node) {
         if (node == null) return "";
+
         List<String> values = new ArrayList<>();
         if (node.getText() != null) values.add(node.getText().toString());
         if (node.getContentDescription() != null) values.add(node.getContentDescription().toString());
@@ -363,8 +416,10 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
     private Double firstMoney(String text) {
         if (text == null) return null;
         Matcher m = MONEY_PATTERN.matcher(text);
-        if (m.find()) return parseMoneyNumber(m.group(1));
-        return null;
+        if (!m.find()) return null;
+
+        double value = parseMoneyNumber(m.group(1));
+        return Double.isFinite(value) ? value : null;
     }
 
     private double parseMoneyNumber(String raw) {
@@ -377,7 +432,8 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
 
     private double safeDouble(String raw, double fallback) {
         try {
-            return Double.parseDouble(raw.trim().replace(",", ""));
+            double v = Double.parseDouble(raw.trim().replace(",", ""));
+            return Double.isFinite(v) && v > 0 ? v : fallback;
         } catch (Exception e) {
             return fallback;
         }
@@ -399,17 +455,21 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
             } else {
                 vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
             }
+
             if (Build.VERSION.SDK_INT >= 26) {
-                vibrator.vibrate(VibrationEffect.createOneShot(millis, VibrationEffect.DEFAULT_AMPLITUDE));
+                vibrator.vibrate(VibrationEffect.createOneShot(
+                        millis,
+                        VibrationEffect.DEFAULT_AMPLITUDE));
             } else {
                 vibrator.vibrate(millis);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // The timed flow uses a local Handler. Events are intentionally not used to spam requests.
+        // Timed flow is driven by the local Handler.
     }
 
     @Override
@@ -423,7 +483,10 @@ public class AutoBuyAccessibilityService extends AccessibilityService {
         running = false;
         handler.removeCallbacksAndMessages(null);
         if (receiver != null) {
-            try { unregisterReceiver(receiver); } catch (Exception ignored) {}
+            try {
+                unregisterReceiver(receiver);
+            } catch (Exception ignored) {
+            }
         }
         super.onDestroy();
     }
