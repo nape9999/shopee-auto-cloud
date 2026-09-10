@@ -1,4 +1,4 @@
-name: Build Shopee Fast Assist v2 APK
+name: Build F v4 APK
 
 on:
   push:
@@ -30,6 +30,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ShopeeFastAssist-v2-APK
+          name: F-v4-Quick-Capture-APK
           path: android-fastbuy/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
