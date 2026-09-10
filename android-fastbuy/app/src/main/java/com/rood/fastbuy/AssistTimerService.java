@@ -78,15 +78,28 @@ public class AssistTimerService extends Service {
             }
             if (remain <= 0 && !signaled0) {
                 signaled0 = true;
-                pulse(700);
-                try { tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 500); } catch (Exception ignored) {}
-                updateNotification("0.000 — กดซื้อทันที", 0);
-                handler.postDelayed(AssistTimerService.this::stopTimer, 10000L);
+                pulse(250);
+                try { tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 180); } catch (Exception ignored) {}
+                updateNotification("0.000 — เริ่มรีราคาอัตโนมัติ", 0);
+
+                Intent trigger = new Intent(AutoBuyAccessibilityService.ACTION_TRIGGER);
+                trigger.setPackage(getPackageName());
+                sendBroadcast(trigger);
+
+                handler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        stopTimer();
+                    }
+                }, 12000L);
                 return;
             }
 
             updateNotification("กำลังจับเวลา", remain);
-            long next = remain > 5000 ? 500L : 25L;
+            long next;
+            if (remain > 5000) next = 500L;
+            else if (remain > 1000) next = 50L;
+            else next = 10L;
             handler.postDelayed(this, next);
         }
     };
@@ -107,7 +120,7 @@ public class AssistTimerService extends Service {
             long ms = remain % 1000;
             text = String.format(Locale.US, "%02d:%02d.%03d", sec / 60, sec % 60, ms);
         } else {
-            text = "ถึงเวลาแล้ว";
+            text = "เริ่มรีราคาแล้ว";
         }
         if (!note.isEmpty()) text += " • " + note;
 
@@ -141,7 +154,7 @@ public class AssistTimerService extends Service {
     private void createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel c = new NotificationChannel(CHANNEL_ID, "Fast Assist Timer", NotificationManager.IMPORTANCE_LOW);
-            c.setDescription("ตัวจับเวลาสำหรับเตือนช่วง Flash Sale");
+            c.setDescription("ตัวจับเวลาสำหรับเริ่มรีราคา Flash Sale");
             c.setSound(null, null);
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             nm.createNotificationChannel(c);
