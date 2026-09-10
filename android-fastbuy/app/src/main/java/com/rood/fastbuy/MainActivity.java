@@ -2,36 +2,64 @@ package com.rood.fastbuy;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.ComponentName;
+import android.content.BroadcastReceiver;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.provider.Settings;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.InputType;
+import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.webkit.CookieManager;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.widget.Button;
-import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONArray;
+
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
+    public static final String ACTION_REFRESH_NOW = "com.rood.fastbuy.REFRESH_NOW";
+
+    private static final Pattern URL_PATTERN = Pattern.compile("https?://[^\\s]+", Pattern.CASE_INSENSITIVE);
+    private static final int MAX_RECENTS = 10;
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
     private SharedPreferences prefs;
-    private EditText urlField, timeField, noteField, targetPriceField, maxTotalField;
-    private CheckBox autoOrderCheck;
+    private EditText urlField;
+    private EditText timeField;
     private TextView status;
+    private WebView webView;
+    private LinearLayout recentBox;
+    private BroadcastReceiver refreshReceiver;
+    private boolean receiverRegistered = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -39,6 +67,8 @@ public class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         prefs = getSharedPreferences("fast_assist", MODE_PRIVATE);
         buildUi();
+        handleIncomingIntent(getIntent());
+
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 5);
@@ -46,196 +76,493 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        refreshStatus();
+    protected void onStart() {
+        super.onStart();
+        registerRefreshReceiver();
     }
 
-    private void refreshStatus() {
-        if (status == null) return;
-        status.setText(isAccessibilityEnabled()
-                ? "พร้อม AUTO • ราคา ≤ • เลือกตัวเลือกแรกอัตโนมัติ"
-                : "ต้องเปิดสิทธิ์ AUTO 1 ครั้งก่อนใช้งาน");
+    @Override
+    protected void onResume() {
+        super.onResume();
+        handler.postDelayed(this::checkClipboardAutomatically, 180L);
+        if (getIntent() != null && getIntent().getBooleanExtra("refresh_on_open", false)) {
+            getIntent().removeExtra("refresh_on_open");
+            handler.postDelayed(this::refreshPreviewBurst, 250L);
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        unregisterRefreshReceiver();
+        super.onStop();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingIntent(intent);
+    }
+
+    @Override
+    protected void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
+        if (webView != null) {
+            webView.stopLoading();
+            webView.loadUrl("about:blank");
+            webView.destroy();
+            webView = null;
+        }
+        super.onDestroy();
     }
 
     private void buildUi() {
         ScrollView scroll = new ScrollView(this);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(28, 28, 28, 60);
+        root.setPadding(dp(18), dp(18), dp(18), dp(50));
         scroll.addView(root);
 
         TextView title = new TextView(this);
         title.setText("F");
-        title.setTextSize(30);
+        title.setTextSize(32);
         title.setTextColor(Color.rgb(225, 62, 45));
-        title.setPadding(0, 0, 0, 2);
         root.addView(title);
 
-        TextView version = new TextView(this);
-        version.setText("v3.2 AUTO • ราคา ≤ • เลือกตัวเลือกแรก");
-        version.setTextSize(14);
-        version.setTextColor(Color.DKGRAY);
-        version.setPadding(0, 0, 0, 12);
-        root.addView(version);
-
-        TextView explain = new TextView(this);
-        explain.setText("ถึงเวลา → รีราคา → ถ้าราคา ≤ ที่ตั้งไว้จึงกดซื้อ → ถ้ามีหน้าตัวเลือกจะเลือกตัวแรกที่กดได้อัตโนมัติ → เข้า Checkout → สั่งซื้อเมื่อยอดรวม ≤ เพดาน");
-        explain.setTextSize(14);
-        explain.setTextColor(Color.DKGRAY);
-        explain.setPadding(0, 0, 0, 18);
-        root.addView(explain);
+        TextView sub = new TextView(this);
+        sub.setText("v4 Quick Capture • แชร์เข้า F • วางลิงก์อัตโนมัติ • ดูสินค้าในแอป");
+        sub.setTextSize(14);
+        sub.setTextColor(Color.DKGRAY);
+        sub.setPadding(0, 0, 0, dp(12));
+        root.addView(sub);
 
         status = new TextView(this);
-        status.setText("ตรวจสอบสิทธิ์ AUTO...");
-        status.setTextSize(16);
-        status.setPadding(18, 16, 18, 16);
+        status.setText("พร้อม • ไม่ใช้ Accessibility");
+        status.setTextSize(15);
+        status.setPadding(dp(14), dp(12), dp(14), dp(12));
         status.setBackgroundColor(Color.rgb(242, 242, 242));
         root.addView(status);
 
-        Button accessibility = button("1) เปิดสิทธิ์ F AUTO (ทำครั้งเดียว)");
-        accessibility.setOnClickListener(v -> {
-            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-            toast("เปิดบริการ “F AUTO” แล้วกลับมาที่แอป");
-        });
-        root.addView(accessibility);
+        TextView hint = new TextView(this);
+        hint.setText("เร็วสุด: จากหน้าสินค้า กด แชร์ → F แล้วลิงก์จะเข้ามาและเปิดดูให้เอง\nหรือกดคัดลอกลิงก์ แล้วกลับเข้า F — ระบบจะวางให้อัตโนมัติ");
+        hint.setTextSize(14);
+        hint.setTextColor(Color.DKGRAY);
+        hint.setPadding(0, dp(14), 0, dp(4));
+        root.addView(hint);
 
-        Button presetShoe = button("Preset: Adidas 99 / US 11");
-        presetShoe.setOnClickListener(v -> {
-            urlField.setText("https://s.shopee.co.th/9fKbNzpTfL");
-            timeField.setText("14:00:00");
-            noteField.setText("Adidas Adizero Evo SL • US 11");
-            targetPriceField.setText("99");
-            maxTotalField.setText("150");
-            save(false);
-            status.setText("โหลด Preset รองเท้าแล้ว • ซื้อเมื่อราคา ≤ 99 บาท");
-        });
-        root.addView(presetShoe);
+        urlField = field(root, "ลิงก์สินค้าล่าสุด", "product_url", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
 
-        Button presetPhone = button("Preset: Galaxy Z Flip8 / Black");
-        presetPhone.setOnClickListener(v -> {
-            urlField.setText("https://s.shopee.co.th/8fS4AtohXU");
-            timeField.setText("00:00:00");
-            noteField.setText("Galaxy Z Flip8 • Black");
-            targetPriceField.setText("99");
-            maxTotalField.setText("150");
-            save(false);
-            status.setText("โหลด Preset โทรศัพท์แล้ว • ซื้อเมื่อราคา ≤ 99 บาท");
-        });
-        root.addView(presetPhone);
-
-        urlField = field(root,
-                "ลิงก์สินค้า",
-                "product_url",
-                "https://s.shopee.co.th/8fS4AtohXU",
-                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-
-        timeField = field(root,
-                "เวลาเริ่มโปร HH:mm:ss",
-                "target_time",
-                "00:00:00",
-                InputType.TYPE_CLASS_DATETIME);
-
-        noteField = field(root,
-                "สินค้า / สี / ไซซ์ (ไว้เตือน)",
-                "product_note",
-                "Black",
-                InputType.TYPE_CLASS_TEXT);
-
-        targetPriceField = field(root,
-                "ซื้อเมื่อราคาบนปุ่ม ≤ (บาท)",
-                "target_price",
-                "99",
-                InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-
-        maxTotalField = field(root,
-                "ยอดรวม Checkout สูงสุด ≤ (บาท)",
-                "max_total",
-                "150",
-                InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-
-        autoOrderCheck = new CheckBox(this);
-        autoOrderCheck.setText("AUTO สั่งซื้อ: กดปุ่มสั่งซื้อให้เอง เมื่ออ่านยอด Checkout ได้และยอด ≤ เพดาน");
-        autoOrderCheck.setChecked(prefs.getBoolean("auto_place_order", false));
-        autoOrderCheck.setTextSize(14);
-        autoOrderCheck.setPadding(0, 14, 0, 4);
-        root.addView(autoOrderCheck);
-
-        Button save = button("บันทึกค่า");
-        save.setOnClickListener(v -> {
-            if (save(false)) toast("บันทึกแล้ว");
-        });
-        root.addView(save);
-
-        Button open = button("เปิดหน้าสินค้าตอนนี้");
-        open.setOnClickListener(v -> {
-            if (save(false)) openProduct();
-        });
-        root.addView(open);
-
-        Button test = button("TEST 5 วินาที — รีราคาเท่านั้น ไม่ซื้อ");
-        test.setOnClickListener(v -> {
-            if (!isAccessibilityEnabled()) {
-                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-                toast("ต้องเปิด F AUTO ก่อนทดสอบ");
-                return;
+        Button clipboard = button("รับลิงก์จากคลิปบอร์ดตอนนี้");
+        clipboard.setOnClickListener(v -> {
+            if (!captureFromClipboard(true)) {
+                toast("ยังไม่พบลิงก์สินค้าที่รองรับในคลิปบอร์ด");
             }
-            if (!save(true)) return;
-            long target = System.currentTimeMillis() + 5000L;
-            startAssist(target);
-            status.setText("TEST: เปิดหน้าสินค้าไว้ด้านหน้า รอ 5 วินาที");
-            openProduct();
         });
-        root.addView(test);
+        root.addView(clipboard);
 
-        Button arm = button("2) ARM AUTO + เปิดหน้าสินค้า");
+        LinearLayout actionRow = new LinearLayout(this);
+        actionRow.setOrientation(LinearLayout.HORIZONTAL);
+        root.addView(actionRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Button preview = button("ดูใน F");
+        preview.setOnClickListener(v -> loadCurrentPreview());
+        actionRow.addView(preview, rowWeight());
+
+        Button external = button("เปิดในแอปต้นทาง");
+        external.setOnClickListener(v -> openCurrentInSourceApp());
+        actionRow.addView(external, rowWeight());
+
+        LinearLayout refreshRow = new LinearLayout(this);
+        refreshRow.setOrientation(LinearLayout.HORIZONTAL);
+        root.addView(refreshRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Button reload = button("รีเฟรชราคาใน F");
+        reload.setOnClickListener(v -> refreshPreviewBurst());
+        refreshRow.addView(reload, rowWeight());
+
+        Button clear = button("ล้างลิงก์");
+        clear.setOnClickListener(v -> {
+            urlField.setText("");
+            prefs.edit().remove("product_url").apply();
+            if (webView != null) webView.loadUrl("about:blank");
+            status.setText("ล้างลิงก์แล้ว");
+        });
+        refreshRow.addView(clear, rowWeight());
+
+        TextView previewLabel = new TextView(this);
+        previewLabel.setText("ดูสินค้าภายใน F");
+        previewLabel.setTextSize(17);
+        previewLabel.setTextColor(Color.BLACK);
+        previewLabel.setPadding(0, dp(18), 0, dp(8));
+        root.addView(previewLabel);
+
+        webView = new WebView(this);
+        configureWebView(webView);
+        LinearLayout.LayoutParams webLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(500));
+        root.addView(webView, webLp);
+
+        TextView webNote = new TextView(this);
+        webNote.setText("หมายเหตุ: โปรบางรายการเป็น App-only จึงอาจไม่แสดงราคา/ปุ่มเหมือนในแอปต้นทาง ใช้ปุ่ม “เปิดในแอปต้นทาง” เมื่อต้องการหน้าจริง");
+        webNote.setTextSize(12);
+        webNote.setTextColor(Color.GRAY);
+        webNote.setPadding(0, dp(8), 0, dp(8));
+        root.addView(webNote);
+
+        timeField = field(root, "เวลารีเฟรช HH:mm:ss", "target_time", "00:00:00", InputType.TYPE_CLASS_DATETIME);
+
+        LinearLayout timerRow = new LinearLayout(this);
+        timerRow.setOrientation(LinearLayout.HORIZONTAL);
+        root.addView(timerRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        Button arm = button("ARM รีเฟรช");
         arm.setTextColor(Color.WHITE);
         arm.setBackgroundColor(Color.rgb(225, 62, 45));
-        arm.setOnClickListener(v -> armAndOpen());
-        root.addView(arm);
+        arm.setOnClickListener(v -> armRefreshTimer());
+        timerRow.addView(arm, rowWeight());
 
-        Button stop = button("หยุด AUTO / ยกเลิกเวลา");
-        stop.setOnClickListener(v -> {
-            Intent i = new Intent(this, AssistTimerService.class).setAction(AssistTimerService.ACTION_STOP);
-            startForegroundCompat(i);
-            status.setText("หยุดแล้ว");
-        });
-        root.addView(stop);
+        Button stop = button("หยุดเวลา");
+        stop.setOnClickListener(v -> stopTimer());
+        timerRow.addView(stop, rowWeight());
 
-        Button battery = button("ตั้งค่าแบตเตอรี่ (แนะนำ: ไม่จำกัด)");
-        battery.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
-        root.addView(battery);
+        TextView recentTitle = new TextView(this);
+        recentTitle.setText("สินค้าล่าสุด");
+        recentTitle.setTextSize(18);
+        recentTitle.setPadding(0, dp(20), 0, dp(6));
+        root.addView(recentTitle);
 
-        TextView instructions = new TextView(this);
-        instructions.setText(
-                "วิธีใช้:\n"
-                        + "• ตั้ง ‘ซื้อเมื่อราคาบนปุ่ม ≤’ เช่น 120 บาท\n"
-                        + "• ตั้ง ‘ยอดรวม Checkout สูงสุด’ แยกอีกชั้น เช่น 150 บาท\n"
-                        + "• ถ้าสินค้ามีหลายตัวเลือก F จะเลือกตัวเลือกแรกที่กดได้ในแต่ละแถวให้เอง\n"
-                        + "• โหมดนี้เน้นเร็ว ไม่ได้คำนวณว่าตัวเลือกไหนราคาถูกที่สุด\n"
-                        + "• หลังเลือกแล้ว ยังต้องผ่านราคา ≤ ที่ตั้ง และยอด Checkout ≤ เพดานก่อนสั่งซื้อ\n"
-                        + "• ถ้าอ่านราคาไม่ได้ หรือเจอ OTP/CAPTCHA/หน้าตรวจสอบ ระบบจะหยุด");
-        instructions.setTextSize(14);
-        instructions.setTextColor(Color.DKGRAY);
-        instructions.setPadding(0, 20, 0, 0);
-        root.addView(instructions);
+        recentBox = new LinearLayout(this);
+        recentBox.setOrientation(LinearLayout.VERTICAL);
+        root.addView(recentBox, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        renderRecents();
+
+        TextView privacy = new TextView(this);
+        privacy.setText("F v4 ไม่ใช้ Accessibility และไม่อ่านหน้าจอแอปอื่น คลิปบอร์ดจะถูกตรวจเฉพาะตอนที่ F เปิดอยู่ด้านหน้าเท่านั้น");
+        privacy.setTextSize(12);
+        privacy.setTextColor(Color.GRAY);
+        privacy.setPadding(0, dp(18), 0, 0);
+        root.addView(privacy);
 
         setContentView(scroll);
-        refreshStatus();
     }
 
-    private EditText field(LinearLayout root, String label, String key, String def, int type) {
+    private void configureWebView(WebView view) {
+        WebSettings settings = view.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setLoadWithOverviewMode(true);
+        settings.setUseWideViewPort(true);
+        settings.setBuiltInZoomControls(false);
+        settings.setDisplayZoomControls(false);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+
+        CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(view, true);
+
+        view.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest request) {
+                Uri u = request.getUrl();
+                String scheme = u.getScheme();
+                return !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme));
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView v, String url) {
+                Uri u = Uri.parse(url);
+                String scheme = u.getScheme();
+                return !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme));
+            }
+        });
+    }
+
+    private void handleIncomingIntent(Intent intent) {
+        if (intent == null) return;
+
+        String candidate = null;
+        if (Intent.ACTION_SEND.equals(intent.getAction()) && "text/plain".equals(intent.getType())) {
+            CharSequence shared = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+            if (shared != null) candidate = extractSupportedUrl(shared.toString());
+        } else if (Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null) {
+            candidate = extractSupportedUrl(intent.getData().toString());
+        }
+
+        if (candidate != null) {
+            acceptUrl(candidate, "รับจากการแชร์แล้ว", true);
+        }
+    }
+
+    private void checkClipboardAutomatically() {
+        captureFromClipboard(false);
+    }
+
+    private boolean captureFromClipboard(boolean forceMessage) {
+        try {
+            ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (cm == null || !cm.hasPrimaryClip()) return false;
+            ClipData clip = cm.getPrimaryClip();
+            if (clip == null || clip.getItemCount() == 0) return false;
+
+            CharSequence text = clip.getItemAt(0).coerceToText(this);
+            if (text == null) return false;
+
+            String found = extractSupportedUrl(text.toString());
+            if (found == null) return false;
+
+            String current = urlField.getText().toString().trim();
+            if (found.equals(current)) {
+                if (forceMessage) status.setText("ลิงก์ในคลิปบอร์ดเป็นสินค้าปัจจุบันอยู่แล้ว");
+                return true;
+            }
+
+            acceptUrl(found, "พบลิงก์จากคลิปบอร์ด • วางให้อัตโนมัติแล้ว", true);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String extractSupportedUrl(String text) {
+        if (text == null) return null;
+        Matcher matcher = URL_PATTERN.matcher(text);
+        while (matcher.find()) {
+            String candidate = cleanUrl(matcher.group());
+            if (isSupportedShoppingUrl(candidate)) return candidate;
+        }
+        return null;
+    }
+
+    private String cleanUrl(String raw) {
+        if (raw == null) return "";
+        String s = raw.trim();
+        while (!s.isEmpty()) {
+            char c = s.charAt(s.length() - 1);
+            if (c == '.' || c == ',' || c == ')' || c == ']' || c == '}' || c == '>' || c == '"' || c == '\'') {
+                s = s.substring(0, s.length() - 1);
+            } else {
+                break;
+            }
+        }
+        return s;
+    }
+
+    private boolean isSupportedShoppingUrl(String raw) {
+        try {
+            Uri uri = Uri.parse(raw);
+            String host = uri.getHost();
+            if (host == null) return false;
+            host = host.toLowerCase(Locale.ROOT);
+            return host.contains("shopee") || host.equals("shp.ee") || host.endsWith(".shp.ee");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void acceptUrl(String url, String message, boolean autoPreview) {
+        urlField.setText(url);
+        prefs.edit().putString("product_url", url).apply();
+        addRecent(url);
+        renderRecents();
+        status.setText(message);
+        if (autoPreview) handler.postDelayed(this::loadCurrentPreview, 120L);
+    }
+
+    private void loadCurrentPreview() {
+        String url = urlField.getText().toString().trim();
+        if (!isSupportedShoppingUrl(url)) {
+            toast("ยังไม่มีลิงก์สินค้าที่รองรับ");
+            return;
+        }
+        prefs.edit().putString("product_url", url).apply();
+        addRecent(url);
+        renderRecents();
+        webView.loadUrl(url);
+        status.setText("กำลังเปิดสินค้าภายใน F");
+    }
+
+    private void refreshPreviewBurst() {
+        String url = urlField.getText().toString().trim();
+        if (!isSupportedShoppingUrl(url)) {
+            status.setText("ยังไม่มีสินค้าสำหรับรีเฟรช");
+            return;
+        }
+        if (webView.getUrl() == null || "about:blank".equals(webView.getUrl())) {
+            webView.loadUrl(url);
+        } else {
+            webView.reload();
+        }
+        handler.postDelayed(() -> {
+            if (webView != null) webView.reload();
+        }, 350L);
+        handler.postDelayed(() -> {
+            if (webView != null) webView.reload();
+        }, 700L);
+        status.setText("รีเฟรชราคาใน F 3 จังหวะ");
+    }
+
+    private void openCurrentInSourceApp() {
+        String url = urlField.getText().toString().trim();
+        if (!isSupportedShoppingUrl(url)) {
+            toast("ยังไม่มีลิงก์สินค้า");
+            return;
+        }
+        prefs.edit().putString("product_url", url).apply();
+        addRecent(url);
+        renderRecents();
+
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            intent.setPackage("com.shopee.th");
+            startActivity(intent);
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+            } catch (Exception ignored) {
+                toast("เปิดลิงก์ไม่สำเร็จ");
+            }
+        }
+    }
+
+    private void armRefreshTimer() {
+        try {
+            String url = urlField.getText().toString().trim();
+            if (!isSupportedShoppingUrl(url)) {
+                toast("ใส่หรือแชร์ลิงก์สินค้าก่อน");
+                return;
+            }
+
+            LocalTime time = LocalTime.parse(
+                    timeField.getText().toString().trim(),
+                    DateTimeFormatter.ofPattern("HH:mm:ss"));
+            ZoneId zone = ZoneId.systemDefault();
+            ZonedDateTime now = ZonedDateTime.now(zone);
+            ZonedDateTime target = ZonedDateTime.of(LocalDate.now(zone), time, zone);
+            if (!target.isAfter(now)) target = target.plusDays(1);
+
+            prefs.edit()
+                    .putString("product_url", url)
+                    .putString("target_time", timeField.getText().toString().trim())
+                    .apply();
+
+            Intent intent = new Intent(this, AssistTimerService.class).setAction(AssistTimerService.ACTION_ARM);
+            intent.putExtra("target_ms", target.toInstant().toEpochMilli());
+            intent.putExtra("product_url", url);
+            startForegroundCompat(intent);
+            status.setText("ARM แล้ว • " + target.format(DateTimeFormatter.ofPattern("dd/MM HH:mm:ss")));
+        } catch (Exception e) {
+            toast("เวลาไม่ถูกต้อง ใช้ HH:mm:ss เช่น 00:00:00");
+        }
+    }
+
+    private void stopTimer() {
+        Intent intent = new Intent(this, AssistTimerService.class).setAction(AssistTimerService.ACTION_STOP);
+        startForegroundCompat(intent);
+        status.setText("หยุดเวลาแล้ว");
+    }
+
+    private void registerRefreshReceiver() {
+        if (receiverRegistered) return;
+        refreshReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent != null && ACTION_REFRESH_NOW.equals(intent.getAction())) {
+                    refreshPreviewBurst();
+                }
+            }
+        };
+        IntentFilter filter = new IntentFilter(ACTION_REFRESH_NOW);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(refreshReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(refreshReceiver, filter);
+        }
+        receiverRegistered = true;
+    }
+
+    private void unregisterRefreshReceiver() {
+        if (!receiverRegistered || refreshReceiver == null) return;
+        try {
+            unregisterReceiver(refreshReceiver);
+        } catch (Exception ignored) {
+        }
+        receiverRegistered = false;
+    }
+
+    private void addRecent(String url) {
+        List<String> urls = readRecents();
+        urls.remove(url);
+        urls.add(0, url);
+        while (urls.size() > MAX_RECENTS) urls.remove(urls.size() - 1);
+        writeRecents(urls);
+    }
+
+    private List<String> readRecents() {
+        List<String> out = new ArrayList<>();
+        try {
+            JSONArray array = new JSONArray(prefs.getString("recent_urls", "[]"));
+            for (int i = 0; i < array.length(); i++) {
+                String value = array.optString(i, "");
+                if (!value.isEmpty()) out.add(value);
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    private void writeRecents(List<String> urls) {
+        JSONArray array = new JSONArray();
+        for (String url : urls) array.put(url);
+        prefs.edit().putString("recent_urls", array.toString()).apply();
+    }
+
+    private void renderRecents() {
+        if (recentBox == null) return;
+        recentBox.removeAllViews();
+        List<String> urls = readRecents();
+
+        if (urls.isEmpty()) {
+            TextView empty = new TextView(this);
+            empty.setText("ยังไม่มีสินค้า • แชร์สินค้ามาที่ F ได้เลย");
+            empty.setTextColor(Color.GRAY);
+            empty.setTextSize(13);
+            recentBox.addView(empty);
+            return;
+        }
+
+        int index = 1;
+        for (String url : urls) {
+            Button b = button(index + ") " + shortDisplay(url));
+            b.setOnClickListener(v -> acceptUrl(url, "เลือกสินค้าจากประวัติแล้ว", true));
+            recentBox.addView(b);
+            index++;
+        }
+    }
+
+    private String shortDisplay(String url) {
+        try {
+            Uri uri = Uri.parse(url);
+            String host = uri.getHost() == null ? "สินค้า" : uri.getHost();
+            String path = uri.getPath() == null ? "" : uri.getPath();
+            String text = host + path;
+            return text.length() > 48 ? text.substring(0, 45) + "…" : text;
+        } catch (Exception e) {
+            return url.length() > 48 ? url.substring(0, 45) + "…" : url;
+        }
+    }
+
+    private EditText field(LinearLayout root, String label, String key, String def, int inputType) {
         TextView l = new TextView(this);
         l.setText(label);
         l.setTextSize(14);
-        l.setPadding(0, 18, 0, 4);
+        l.setPadding(0, dp(16), 0, dp(4));
         root.addView(l);
 
         EditText e = new EditText(this);
         e.setSingleLine(true);
-        e.setInputType(type);
+        e.setInputType(inputType);
         e.setText(prefs.getString(key, def));
-        root.addView(e, new LinearLayout.LayoutParams(-1, -2));
+        root.addView(e, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return e;
     }
 
@@ -243,135 +570,29 @@ public class MainActivity extends Activity {
         Button b = new Button(this);
         b.setText(text);
         b.setAllCaps(false);
-        b.setTextSize(15);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, 14, 0, 0);
+        b.setTextSize(14);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, dp(8), 0, 0);
         b.setLayoutParams(lp);
         return b;
     }
 
-    private boolean save(boolean testOnly) {
-        String targetRaw = targetPriceField.getText().toString().trim();
-        String totalRaw = maxTotalField.getText().toString().trim();
-        double targetPrice = parsePositiveNumber(targetRaw);
-        double maxTotal = parsePositiveNumber(totalRaw);
-
-        if (targetPrice <= 0) {
-            toast("กรุณาใส่ราคาเงื่อนไขมากกว่า 0 บาท");
-            return false;
-        }
-        if (maxTotal <= 0) {
-            toast("กรุณาใส่ยอดรวมสูงสุดมากกว่า 0 บาท");
-            return false;
-        }
-
-        prefs.edit()
-                .putString("product_url", urlField.getText().toString().trim())
-                .putString("target_time", timeField.getText().toString().trim())
-                .putString("product_note", noteField.getText().toString().trim())
-                .putString("target_price", targetRaw)
-                .putString("max_total", totalRaw)
-                .putBoolean("auto_place_order", autoOrderCheck.isChecked())
-                .putBoolean("test_only", testOnly)
-                .apply();
-        return true;
+    private LinearLayout.LayoutParams rowWeight() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lp.setMargins(dp(3), dp(6), dp(3), 0);
+        return lp;
     }
 
-    private double parsePositiveNumber(String raw) {
-        try {
-            double v = Double.parseDouble(raw.replace(",", ""));
-            return Double.isFinite(v) ? v : -1;
-        } catch (Exception e) {
-            return -1;
-        }
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
-    private void armAndOpen() {
-        if (!isAccessibilityEnabled()) {
-            status.setText("ยังไม่ได้เปิดสิทธิ์ AUTO");
-            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-            toast("เปิด “F AUTO” 1 ครั้ง แล้วกลับมากด ARM AUTO");
-            return;
-        }
-
-        try {
-            if (!save(false)) return;
-            LocalTime t = LocalTime.parse(
-                    timeField.getText().toString().trim(),
-                    DateTimeFormatter.ofPattern("HH:mm:ss"));
-
-            ZoneId zone = ZoneId.systemDefault();
-            ZonedDateTime now = ZonedDateTime.now(zone);
-            ZonedDateTime target = ZonedDateTime.of(LocalDate.now(zone), t, zone);
-            if (!target.isAfter(now)) target = target.plusDays(1);
-
-            long targetMs = target.toInstant().toEpochMilli();
-            prefs.edit().putLong("target_ms", targetMs).apply();
-            startAssist(targetMs);
-            status.setText("ARM AUTO: " + target.format(DateTimeFormatter.ofPattern("dd/MM HH:mm:ss"))
-                    + " • ราคา ≤ " + targetPriceField.getText().toString().trim());
-            openProduct();
-        } catch (Exception e) {
-            toast("รูปแบบเวลาไม่ถูกต้อง ใช้ HH:mm:ss เช่น 00:00:00");
-        }
+    private void startForegroundCompat(Intent intent) {
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent);
+        else startService(intent);
     }
 
-    private void startAssist(long targetMs) {
-        Intent i = new Intent(this, AssistTimerService.class).setAction(AssistTimerService.ACTION_ARM);
-        i.putExtra("target_ms", targetMs);
-        i.putExtra("note", noteField.getText().toString().trim());
-        startForegroundCompat(i);
-    }
-
-    private void openProduct() {
-        String u = urlField.getText().toString().trim();
-        if (u.isEmpty()) {
-            toast("กรุณาใส่ลิงก์สินค้า");
-            return;
-        }
-        try {
-            Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(u));
-            i.setPackage("com.shopee.th");
-            startActivity(i);
-        } catch (Exception e) {
-            try {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(u)));
-            } catch (Exception ignored) {
-                toast("เปิดลิงก์สินค้าไม่สำเร็จ");
-            }
-        }
-    }
-
-    private boolean isAccessibilityEnabled() {
-        try {
-            int enabled = Settings.Secure.getInt(
-                    getContentResolver(),
-                    Settings.Secure.ACCESSIBILITY_ENABLED,
-                    0);
-            if (enabled != 1) return false;
-
-            String services = Settings.Secure.getString(
-                    getContentResolver(),
-                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
-            if (services == null) return false;
-
-            ComponentName component = new ComponentName(this, AutoBuyAccessibilityService.class);
-            String full = component.flattenToString();
-            String shortName = component.flattenToShortString();
-            return services.contains(full)
-                    || services.contains(shortName)
-                    || services.contains(getPackageName());
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private void startForegroundCompat(Intent i) {
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
-        else startService(i);
-    }
-
-    private void toast(String s) {
-        Toast.makeText(this, s, Toast.LENGTH_LONG).show();
+    private void toast(String text) {
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show();
     }
 }
