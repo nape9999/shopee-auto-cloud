@@ -54,7 +54,7 @@ public class MainActivity extends Activity {
     private void refreshStatus() {
         if (status == null) return;
         status.setText(isAccessibilityEnabled()
-                ? "พร้อม AUTO • โหมดราคา ≤ เปิดใช้งาน"
+                ? "พร้อม AUTO • ราคา ≤ • เลือกตัวเลือกแรกอัตโนมัติ"
                 : "ต้องเปิดสิทธิ์ AUTO 1 ครั้งก่อนใช้งาน");
     }
 
@@ -73,14 +73,14 @@ public class MainActivity extends Activity {
         root.addView(title);
 
         TextView version = new TextView(this);
-        version.setText("v3.1 AUTO • ซื้อเมื่อราคา ≤ ค่าที่ตั้ง");
+        version.setText("v3.2 AUTO • ราคา ≤ • เลือกตัวเลือกแรก");
         version.setTextSize(14);
         version.setTextColor(Color.DKGRAY);
         version.setPadding(0, 0, 0, 12);
         root.addView(version);
 
         TextView explain = new TextView(this);
-        explain.setText("ถึงเวลา → รีราคาหน้าสินค้า → อ่านราคาบนปุ่มซื้อ → ถ้าราคา ≤ ที่ตั้งไว้จึงกดซื้อ → ตรวจยอด Checkout → กดสั่งซื้อเฉพาะเมื่อยอดรวม ≤ เพดาน");
+        explain.setText("ถึงเวลา → รีราคา → ถ้าราคา ≤ ที่ตั้งไว้จึงกดซื้อ → ถ้ามีหน้าตัวเลือกจะเลือกตัวแรกที่กดได้อัตโนมัติ → เข้า Checkout → สั่งซื้อเมื่อยอดรวม ≤ เพดาน");
         explain.setTextSize(14);
         explain.setTextColor(Color.DKGRAY);
         explain.setPadding(0, 0, 0, 18);
@@ -209,13 +209,12 @@ public class MainActivity extends Activity {
         TextView instructions = new TextView(this);
         instructions.setText(
                 "วิธีใช้:\n"
-                        + "• ตั้ง ‘ซื้อเมื่อราคาบนปุ่ม ≤’ เช่น 120 บาท ถ้าราคาขึ้น 99 / 109 / 120 ระบบถือว่าผ่านทั้งหมด\n"
+                        + "• ตั้ง ‘ซื้อเมื่อราคาบนปุ่ม ≤’ เช่น 120 บาท\n"
                         + "• ตั้ง ‘ยอดรวม Checkout สูงสุด’ แยกอีกชั้น เช่น 150 บาท\n"
-                        + "• ก่อนเวลา เลือกสี/ไซซ์ คูปอง และวิธีชำระเงินให้พร้อม\n"
-                        + "• กด ARM AUTO แล้วค้างหน้าสินค้าไว้\n"
-                        + "• เมื่อถึงเวลา ระบบจะรีราคาอัตโนมัติสูงสุด 3 ครั้งในช่วงสั้น ๆ\n"
-                        + "• ระบบอิงราคาที่อ่านได้จากปุ่มซื้อ ถ้าอ่านราคาไม่ได้จะไม่ซื้อ เพื่อป้องกันกดผิดราคา\n"
-                        + "• ถ้าเจอ OTP, CAPTCHA หรือหน้าตรวจสอบ จะหยุดทันที");
+                        + "• ถ้าสินค้ามีหลายตัวเลือก F จะเลือกตัวเลือกแรกที่กดได้ในแต่ละแถวให้เอง\n"
+                        + "• โหมดนี้เน้นเร็ว ไม่ได้คำนวณว่าตัวเลือกไหนราคาถูกที่สุด\n"
+                        + "• หลังเลือกแล้ว ยังต้องผ่านราคา ≤ ที่ตั้ง และยอด Checkout ≤ เพดานก่อนสั่งซื้อ\n"
+                        + "• ถ้าอ่านราคาไม่ได้ หรือเจอ OTP/CAPTCHA/หน้าตรวจสอบ ระบบจะหยุด");
         instructions.setTextSize(14);
         instructions.setTextColor(Color.DKGRAY);
         instructions.setPadding(0, 20, 0, 0);
