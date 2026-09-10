@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">F</string>
-    <string name="accessibility_service_name">F AUTO</string>
-    <string name="accessibility_desc">ช่วยรีเฟรชราคาหน้าสินค้าและกดซื้อเมื่อราคาบนปุ่มซื้อน้อยกว่าหรือเท่ากับค่าที่ผู้ใช้กำหนด โดยหยุดทันทีเมื่อพบหน้าตรวจสอบความปลอดภัย</string>
 </resources>
